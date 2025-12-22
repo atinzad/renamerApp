@@ -33,11 +33,12 @@ def main() -> None:
     folder_id = st.text_input("Folder ID")
     sqlite_path = st.text_input("SQLite Path", value="./app.db")
 
-    cols = st.columns(4)
+    cols = st.columns(5)
     create_clicked = cols[0].button("Create Job")
-    preview_clicked = cols[1].button("Preview")
-    apply_clicked = cols[2].button("Apply Rename")
-    undo_clicked = cols[3].button("Undo Last")
+    list_clicked = cols[1].button("List Files")
+    preview_clicked = cols[2].button("Preview")
+    apply_clicked = cols[3].button("Apply Rename")
+    undo_clicked = cols[4].button("Undo Last")
 
     if create_clicked:
         try:
@@ -50,6 +51,16 @@ def main() -> None:
             st.success(f"Job created: {job.job_id}")
         except Exception as exc:
             st.error(f"Create job failed: {exc}")
+
+    if list_clicked:
+        try:
+            services = _get_services(access_token, sqlite_path)
+            files = services["drive"].list_folder_files(folder_id)
+            st.session_state["files"] = files
+            st.session_state["preview_ops"] = []
+            st.info(f"Listed {len(files)} files from Drive.")
+        except Exception as exc:
+            st.error(f"List files failed: {exc}")
 
     job_id = st.session_state.get("job_id")
     if job_id:
