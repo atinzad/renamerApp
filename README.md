@@ -23,7 +23,12 @@ Increment 1 scope:
 uv sync
 ```
 
-2) Start the Streamlit UI:
+2) Activate the virtual environment:
+```bash
+source .venv/bin/activate
+```
+
+3) Start the Streamlit UI:
 ```bash
 streamlit run src/app/ui_streamlit/main.py
 ```
