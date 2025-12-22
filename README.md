@@ -45,16 +45,31 @@ Then use:
 - Undo Rename — reverts the last rename batch
 
 ## Authentication (OAuth)
+Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
 Recommended: use the built-in OAuth flow so you do not have to paste access tokens.
 
 Steps:
-1) In Google Cloud Console, enable the Google Drive API.
+1) In Google Cloud Console, enable the Google Drive API in the same project as the OAuth client.
 2) Create OAuth credentials (Desktop or Web).
 3) Add the redirect URI: `http://localhost:8080/`.
-4) In the UI, enter the Client ID and Client Secret, then click "Sign in with Google".
+4) If the consent screen is in Testing, add your Google account as a Test user.
+5) In the UI, enter the Client ID and Client Secret, then click "Sign in with Google".
 
 The app stores the refresh token securely in the OS keychain via `keyring`.
 Manual access token entry is still available as a fallback.
+
+### Manual OAuth code flow (no localhost callback)
+If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM),
+use the manual OAuth code flow:
+1) Click "Sign in with Google" to generate the authorization link.
+2) Complete consent and copy the redirect URL (or the `code=` value).
+3) Paste the redirect URL in "Redirect URL (optional)" and click "Extract code".
+4) Click "Exchange code" to obtain a session access token.
+
+### Sharing with end users
+To let users sign in without being added as Test users, publish the OAuth consent screen.
+This requires completing Google's OAuth verification for sensitive scopes like Drive.
+Until verification is approved, only Test users can authorize the app.
 
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.

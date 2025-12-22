@@ -23,6 +23,9 @@ class GoogleDriveAdapter(DrivePort):
                 "q": query,
                 "fields": "nextPageToken, files(id, name, mimeType)",
                 "pageSize": 1000,
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "corpora": "allDrives",
             }
             if page_token:
                 params["pageToken"] = page_token
