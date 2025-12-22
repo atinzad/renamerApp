@@ -5,7 +5,7 @@ Drive folder. It includes domain logic, ports, adapters (Google Drive + SQLite),
 and a minimal Streamlit UI for manual rename preview, apply, and undo.
 
 Increment 1 scope:
-- Create jobs and list image files from a folder
+- Create jobs and list files from a folder
 - Preview manual rename plan with sanitization and collision handling
 - Apply renames and save an undo log
 - Undo the last rename operation
@@ -50,4 +50,4 @@ Then use:
 
 ## Notes
 - Increment 1 only: no OCR, labels, or report generation.
-- The Drive adapter only returns `image/*` files.
+- The Drive adapter returns all files in the folder.
