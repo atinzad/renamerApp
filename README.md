@@ -39,10 +39,22 @@ PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 - SQLite Path (defaults to `./app.db`)
 
 Then use:
-- Create Job — loads image files into the job
+- List Files — loads files into a job
 - Preview — shows the rename plan
 - Apply Rename — renames files and saves undo
-- Undo Last — reverts the last rename batch
+- Undo Rename — reverts the last rename batch
+
+## Authentication (OAuth)
+Recommended: use the built-in OAuth flow so you do not have to paste access tokens.
+
+Steps:
+1) In Google Cloud Console, enable the Google Drive API.
+2) Create OAuth credentials (Desktop or Web).
+3) Add the redirect URI: `http://localhost:8080/`.
+4) In the UI, enter the Client ID and Client Secret, then click "Sign in with Google".
+
+The app stores the refresh token securely in the OS keychain via `keyring`.
+Manual access token entry is still available as a fallback.
 
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.
