@@ -30,7 +30,7 @@ source .venv/bin/activate
 
 3) Start the Streamlit UI:
 ```bash
-streamlit run src/app/ui_streamlit/main.py
+PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 ```
 
 3) In the UI, enter:
