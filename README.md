@@ -17,10 +17,10 @@ Increment 1 scope:
 - `src/app/services/` — application services
 - `src/app/ui_streamlit/` — Streamlit UI entrypoint
 
-## Run Locally
-1) Install dependencies (example):
+## Run Locally (uv)
+1) Create the environment and install dependencies:
 ```bash
-pip install streamlit requests
+uv sync
 ```
 
 2) Start the Streamlit UI:
@@ -38,6 +38,10 @@ Then use:
 - Preview — shows the rename plan
 - Apply Rename — renames files and saves undo
 - Undo Last — reverts the last rename batch
+
+## Development Notes
+- If you do not have `uv` installed, see https://github.com/astral-sh/uv.
+- Dependencies are defined in `pyproject.toml`.
 
 ## Notes
 - Increment 1 only: no OCR, labels, or report generation.
