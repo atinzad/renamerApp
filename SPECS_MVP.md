@@ -122,7 +122,7 @@ repo/
 
 ## 4. Increments Overview (Final Target)
 - Increment 1: Manual rename + undo (Drive) + OAuth-based access token flow
-- Increment 2: Fixed-schema REPORT.txt generation + upload
+- Increment 2: Per-file REPORT.txt generation (file list + extracted-content placeholders) + upload
 - Increment 3: OCR for job files (and later example files)
 - Increment 4: User-defined labels (“training”) + similarity-based classification
 - Increment 5: LLM doc-type classification (fallback when no label match)
@@ -222,58 +222,80 @@ Notes:
 - Undo restores old names
 - UI imports services only; no adapter imports
 
-## 6. INCREMENT 2 SPEC — Fixed-Schema REPORT.txt Generation + Upload
+## 6. INCREMENT 2 SPEC — Per-file REPORT.txt (Files + Extracted Contents Placeholder)
+
 ### 6.1 Scope (MUST implement)
-Generate a structured report file in the same folder:
+Generate a report file in the same Drive folder **based solely on**:
+- what files exist in the job (using the names stored in `job_files.name`, which should reflect any applied renames), and
+- the extracted contents for each file (for Increment 2 this is a placeholder).
+
+MUST implement:
 - Filename: `REPORT_YYYY-MM-DD.txt` (date = local job date)
-- Content: fixed schema with stable labels/order
-- Values default to `UNKNOWN`
-- Includes job metadata and file inventory counts
+- Deterministic rendering:
+  - Files MUST be listed in a stable order: `(sort_index ASC, name ASC, file_id ASC)`
+- For each file, render a **file block** that includes:
+  - File name
+  - Drive `file_id`
+  - `mime_type`
+  - `EXTRACTED_TEXT` placeholder (until Increment 3+)
+  - `EXTRACTED_FIELDS_JSON` placeholder (until Increment 5+)
 - User can preview report text in UI
 - User can write report to Drive folder
 
 ### 6.2 Non-goals (MUST NOT implement)
-- OCR-driven report fields
-- Labels/LLM
-- Background jobs
+- OCR or any extraction logic (Increment 3+)
+- Labeling / “training” / similarity classification (Increment 4+)
+- LLM-based doc type classification (Increment 5+)
+- Consolidation into top-level identity fields (Name, Civil ID, etc.) (Increment 7)
 
-### 6.3 Domain requirements
-- report_schema: a canonical ordered list of labels, example:
-  - Report Version:
-  - Folder Name:
-  - Folder ID:
-  - Collected On:
-  - Total Files:
-  - Successfully Parsed:
-  - Needs Review:
-  - Name:
-  - Civil ID:
-  - Contract Type:
-  - Contract Number:
-  - Contract Date:
-  - Expiry Date:
-  - Notes:
-  - Inventory Summary:
-  - Appendix (optional):
-- report_render(meta: dict, fields: dict, notes: list[str], appendix: list[dict]) -> str
-  - Always renders labels in the same order
-  - If value missing -> `UNKNOWN`
-  - Inventory summary includes counts of files by mimetype and/or extension (basic for now)
+### 6.3 Report format (canonical + deterministic)
+The report MUST be plain text and use stable section headers exactly as follows.
 
-### 6.4 Port changes
+**Header (minimal):**
+- `REPORT_VERSION: 1`
+- `JOB_ID: <job_id>`
+- `FOLDER_ID: <folder_id>`
+- `GENERATED_AT: <ISO-8601 local datetime>`
+
+**Files section:**
+For each file, render:
+
+```
+--- FILE START ---
+INDEX: <1-based index in stable order>
+FILE_NAME: <job_files.name>
+FILE_ID: <file_id>
+MIME_TYPE: <mime_type>
+
+EXTRACTED_TEXT:
+<<<PENDING_EXTRACTION>>>
+
+EXTRACTED_FIELDS_JSON:
+<<<PENDING_EXTRACTION>>>
+--- FILE END ---
+```
+
+Notes:
+- The placeholder token MUST be exactly `<<<PENDING_EXTRACTION>>>` (verbatim).
+- No additional “summary fields” are required in Increment 2 (counts, “Needs Review”, etc.).
+- Future increments may replace the placeholder blocks with actual extraction outputs, but the headers MUST remain stable.
+
+### 6.4 Ports requirements
 - DrivePort MUST add:
-  - upload_text_file(folder_id: str, filename: str, content: str) -> str (returns created file_id)
+  - `upload_text_file(folder_id: str, filename: str, content: str) -> str` (returns created `file_id`)
 
 ### 6.5 Services requirements
 - ReportService
-  - preview_report(job_id) -> str
-  - write_report(job_id) -> report_file_id
-- For Increment 2, “fields” are UNKNOWN-filled; only metadata and inventory are populated.
+  - `preview_report(job_id: str) -> str`
+  - `write_report(job_id: str) -> str` (returns created report `file_id`)
+- For Increment 2, the service MUST:
+  - load `jobs` + `job_files` from SQLite
+  - render the canonical report format above
+  - fill `EXTRACTED_*` blocks with the placeholder token
 
 ### 6.6 Storage changes
-- Store report file_id in jobs table (optional but recommended):
-  - ALTER jobs add report_file_id TEXT (or separate table job_reports)
-- This is not required for function but helps future updates/versioning.
+- Storing the created report `file_id` is optional but recommended:
+  - `ALTER jobs ADD COLUMN report_file_id TEXT`
 
 ### 6.7 UI requirements
 - In job view:
@@ -282,9 +304,11 @@ Generate a structured report file in the same folder:
   - Button: “Write Report to Folder”
 
 ### 6.8 Acceptance criteria
-- Report preview always matches schema order
-- Report upload creates a text file in folder
-- No OCR/LLM is required
+- Report preview lists **all job files** in stable order
+- Each file block contains the placeholder token for extracted content
+- Report upload creates a text file in the Drive folder
+- No OCR/LLM/labels are required for Increment 2
+
 
 ## 7. INCREMENT 3 SPEC — OCR for Job Files (Text Extraction)
 ### 7.1 Scope (MUST implement)
