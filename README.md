@@ -48,6 +48,10 @@ Then use:
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
 Recommended: use the built-in OAuth flow so you do not have to paste access tokens.
 
+### Optional local config (.env)
+The app can prefill OAuth Client ID, OAuth Client Secret, and Folder ID from a local `.env` file.
+Copy `.env.example` to `.env` and edit it with your values. The `.env` file is ignored by git.
+
 Steps:
 1) In Google Cloud Console, enable the Google Drive API in the same project as the OAuth client.
 2) Create OAuth credentials (Desktop or Web).

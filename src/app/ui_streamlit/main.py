@@ -16,6 +16,7 @@ import requests
 import streamlit as st
 
 _SRC_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _SRC_ROOT.parent
 if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
@@ -49,6 +50,22 @@ def _init_state() -> None:
     st.session_state.setdefault("oauth_auth_url", None)
     st.session_state.setdefault("oauth_state", None)
     st.session_state.setdefault("manual_access_token", "")
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")  # basic quote trimming
+        if key:
+            values[key] = value
+    return values
 
 
 def _get_services(access_token: str, sqlite_path: str):
@@ -262,18 +279,22 @@ def main() -> None:
     if st.session_state.get("oauth_state"):
         _OAUTH_STATE = st.session_state.get("oauth_state")
 
+    env_values = _load_env_file(_REPO_ROOT / ".env")
     stored_client_id = _get_keyring_value(_KEYRING_CLIENT_ID) or ""
     stored_client_secret = _get_keyring_value(_KEYRING_CLIENT_SECRET) or ""
+    env_client_id = env_values.get("OAUTH_CLIENT_ID", "")
+    env_client_secret = env_values.get("OAUTH_CLIENT_SECRET", "")
+    env_folder_id = env_values.get("FOLDER_ID", "")
 
     st.subheader("Google Login (Recommended)")
     client_id = st.text_input(
         "OAuth Client ID",
-        value=stored_client_id,
+        value=env_client_id or stored_client_id,
         help="Create an OAuth client in Google Cloud Console (OAuth consent + credentials).",
     )
     client_secret = st.text_input(
         "OAuth Client Secret",
-        value=stored_client_secret,
+        value=env_client_secret or stored_client_secret,
         type="password",
         help="Client secret from the same OAuth client.",
     )
@@ -402,6 +423,7 @@ def main() -> None:
                 st.error(str(exc))
     folder_id = st.text_input(
         "Folder ID or URL",
+        value=env_folder_id,
         help="Paste a Drive folder ID or the full folder URL.",
     )
     sqlite_path = st.text_input("SQLite Path", value="./app.db")
