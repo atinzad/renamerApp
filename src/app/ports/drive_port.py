@@ -11,3 +11,6 @@ class DrivePort(Protocol):
 
     def rename_file(self, file_id: str, new_name: str) -> None:
         """Rename a file by id."""
+
+    def upload_text_file(self, folder_id: str, filename: str, content: str) -> str:
+        """Upload a text file and return the created file id."""
