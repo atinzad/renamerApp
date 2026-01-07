@@ -116,6 +116,7 @@ repo/
 - save_undo_log(undo: UndoLog) -> None
 - get_last_undo_log(job_id: str) -> UndoLog | None
 - clear_last_undo_log(job_id: str) -> None
+- bulk_insert_label_presets(labels: list[dict]) -> None
 
 #### 3.2.3 Ports added later
 - OCRPort (Increment 3)
@@ -454,6 +455,7 @@ Notes:
   - Attach example (Drive file_id input)
   - Show examples per label and whether processed
   - Button: “Process examples” (runs OCR + embeddings/tokens)
+  - Validate extraction_schema and naming_template before saving label configuration
 - Job page:
   - Button: “Classify using labels”
   - Column: Assigned Label, Score, Status (MATCHED/AMBIGUOUS/NO_MATCH)
@@ -464,6 +466,17 @@ Notes:
 - Example processing stores features
 - Classification assigns labels to job files deterministically using similarity
 - Overrides persist and take precedence
+
+### 8.10 Agent preset import/export (Seed mechanism)
+- On startup, if no labels exist, check for `presets.json` in the repo root
+- If present, auto-load label presets into storage
+- Services layer orchestrates auto-seed during initialization
+- StoragePort must support bulk insert for label presets
+
+### 8.11 Domain requirements (schema validation)
+- Domain must provide a validation function that:
+  - validates the admin-defined JSON schema
+  - ensures every variable in the naming_template has a corresponding key in the schema
 
 ## 9. INCREMENT 5 SPEC — LLM Doc-Type Classification (Fallback for Unlabeled Files)
 ### 9.1 Scope (MUST implement)
@@ -611,6 +624,8 @@ For each file:
 - Files renamed according to previewed plan
 - Undo restores originals
 - Report is filled with consolidated values, stable schema, and includes label inventory
+- Fresh deployment can auto-load agent presets from `presets.json`
+- Broken naming templates are rejected by schema validation before save
 
 ## 12. Prompt-Generation Guidance (for an LLM using this spec)
 ### 12.1 Per increment, prompts SHOULD be broken into silos:
