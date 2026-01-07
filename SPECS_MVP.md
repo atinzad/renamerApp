@@ -40,6 +40,7 @@
 - Layer E (Adapters) must remain dumb:
   - Adapters accept schema + text and return structured JSON output.
   - Adapters do not contain label-specific logic or hard-coded extractors.
+- Single-file mandate for Streamlit UI remains intact (single entrypoint, no multi-page UI).
 
 ### 1.2 Import rules
 - UI MUST import only from:
@@ -455,7 +456,7 @@ Notes:
   - Attach example (Drive file_id input)
   - Show examples per label and whether processed
   - Button: “Process examples” (runs OCR + embeddings/tokens)
-  - Validate extraction_schema and naming_template before saving label configuration
+  - Validate extraction_schema and naming_template (via validate_schema_config) before saving label configuration
 - Job page:
   - Button: “Classify using labels”
   - Column: Assigned Label, Score, Status (MATCHED/AMBIGUOUS/NO_MATCH)
@@ -472,11 +473,26 @@ Notes:
 - If present, auto-load label presets into storage
 - Services layer orchestrates auto-seed during initialization
 - StoragePort must support bulk insert for label presets
+- Provide export capability to write current labels to `presets.json`
 
 ### 8.11 Domain requirements (schema validation)
-- Domain must provide a validation function that:
-  - validates the admin-defined JSON schema
-  - ensures every variable in the naming_template has a corresponding key in the schema
+- Domain must provide a validation function:
+  - validate_schema_config(schema_json, naming_template) -> list[str] | None
+  - validates schema_json is valid JSON
+  - validates schema_json follows a flat key-value pair structure
+  - ensures every placeholder in naming_template (e.g., {customer_name}) exists as a key in schema_json
+
+### 8.12 No-code schema builder UI/UX
+- Provide a dynamic list of rows where users enter:
+  - Field Name
+  - Data Type (String, Number, Date) via dropdown
+- Advanced Mode toggle:
+  - Switch to a Raw JSON Editor for power users
+  - Changes are kept in sync between both views
+- Serialization:
+  - The UI converts the visual list into extraction_schema_json before calling the service layer
+- UX helper:
+  - Provide “Copy Placeholder” buttons for each field to assist in naming_template creation
 
 ## 9. INCREMENT 5 SPEC — LLM Doc-Type Classification (Fallback for Unlabeled Files)
 ### 9.1 Scope (MUST implement)
@@ -626,6 +642,7 @@ For each file:
 - Report is filled with consolidated values, stable schema, and includes label inventory
 - Fresh deployment can auto-load agent presets from `presets.json`
 - Broken naming templates are rejected by schema validation before save
+- Non-technical users can define new document types via the no-code schema builder without writing JSON
 
 ## 12. Prompt-Generation Guidance (for an LLM using this spec)
 ### 12.1 Per increment, prompts SHOULD be broken into silos:
