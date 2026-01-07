@@ -33,6 +33,14 @@
 - Layer D: Ports (interfaces/protocols)
 - Layer E: Adapters (Google Drive, OCR, Embeddings, LLM, Storage)
 
+### 1.1.1 Dynamic schema-driven agent hydration (must remain true)
+- Layer B (Services) is responsible for agent hydration:
+  - Fetch label-specific extraction_schema and naming_template from storage.
+  - Pass schema + OCR text to LLMPort for structured output.
+- Layer E (Adapters) must remain dumb:
+  - Adapters accept schema + text and return structured JSON output.
+  - Adapters do not contain label-specific logic or hard-coded extractors.
+
 ### 1.2 Import rules
 - UI MUST import only from:
   - `app.container` (composition root)
@@ -367,13 +375,22 @@ Notes:
 - Classify job files by matching them against label examples
 - Store per-file assigned label + confidence score
 - UI shows label assignments and allows manual override
+- Admin can define an extraction_schema (JSON object defining keys/types) and a naming_template
+  for every label created
 
 ### 8.2 Non-goals (MUST NOT implement)
 - LLM doc-type classification (Increment 5)
 - Automatic field extraction and naming (Increment 6+)
 
 ### 8.3 New domain models
-- Label(label_id: str, name: str, is_active: bool, created_at: datetime)
+- Label(
+  label_id: str,
+  name: str,
+  is_active: bool,
+  created_at: datetime,
+  extraction_schema_json: str,
+  naming_template: str,
+  )
 - LabelExample(example_id: str, label_id: str, file_id: str, filename: str, created_at: datetime)
 - LabelMatch(label_id: str | None, score: float, rationale: str, status: one of {MATCHED, AMBIGUOUS, NO_MATCH})
 
@@ -417,7 +434,14 @@ Notes:
 
 ### 8.7 Storage changes (SQLite)
 - Add tables:
-  - labels(label_id TEXT PRIMARY KEY, name TEXT, is_active INTEGER, created_at TEXT)
+  - labels(
+    label_id TEXT PRIMARY KEY,
+    name TEXT,
+    is_active INTEGER,
+    created_at TEXT,
+    extraction_schema_json TEXT,
+    naming_template TEXT
+    )
   - label_examples(example_id TEXT PRIMARY KEY, label_id TEXT, file_id TEXT, filename TEXT, created_at TEXT)
   - label_example_features(example_id TEXT PRIMARY KEY, ocr_text TEXT, embedding_json TEXT, token_fingerprint TEXT, updated_at TEXT)
   - file_label_assignments(job_id TEXT, file_id TEXT, label_id TEXT, score REAL, status TEXT, updated_at TEXT)
@@ -482,60 +506,56 @@ Notes:
 
 ## 10. INCREMENT 6 SPEC — Field Extraction + Deterministic Naming Proposals (Preview)
 ### 10.1 Scope (MUST implement)
-- Implement at least one extractor (recommended: “Front Civil ID” / CIVIL_ID)
-- Extraction uses OCR text (and optionally LLM) to produce structured fields
+- Use a single Dynamic Extractor Agent hydrated at runtime
+- Extraction uses OCR text and a label-specific JSON schema to produce structured fields
 - Deterministic naming proposals generated from extracted fields
 - Preview table shows original -> proposed + warnings (missing fields, low confidence)
 - No automatic rename apply is required in this increment (apply happens Increment 7), but it may be included as a separate button if desired.
 
-### 10.2 Key design decision: extractor selection priority
+### 10.2 Key design decision: extractor hydration priority
 For each file:
-1) If file has an assigned label (or override) and that label has a configured extractor_key -> use that extractor
-2) Else if file has doc_type classification -> use doc_type extractor
-3) Else -> generic extractor (produces minimal fields)
+1) If file has an assigned label (or override), hydrate the extractor with that label’s schema
+2) Else if file has doc_type classification, use a doc-type default schema
+3) Else use a generic schema that produces minimal fields
 
 ### 10.3 Domain requirements
-- Extraction field models (example for Civil ID Front):
-  - CivilIdFrontFields:
-    - name
-    - civil_id
-    - expiry_date
-    - (optional: dob, nationality)
-  - Each field may have confidence (0..1) or “unknown”
+- Extraction field models are dynamic based on label-defined schema
+  - Schema is a JSON object describing keys and types
+  - Each extracted field may include confidence (0..1) or “unknown”
 - Naming templates:
-  - Deterministic template rules per extractor_key and/or doc_type
-  - Example template for Front Civil ID:
-    - "{Name}CID{CivilID}_{ExpiryDate}.{ext}"
+  - Deterministic template rules per label (naming_template)
+  - Templates are filled based on extracted keys; missing keys resolve to UNKNOWN
 - Missing field handling:
   - If required field missing -> include placeholder "UNKNOWN"
   - Or mark as “needs review” and do not generate final name unless allowed by policy
 - Naming sanitization and collisions reuse Increment 1 logic
 
 ### 10.4 Port requirements
-- LLMPort MUST add a generic “extract_fields” method OR specific extractor calls:
-  - extract_fields(prompt_or_schema, ocr_text) -> dict
+- LLMPort MUST add a generic “extract_fields” method:
+  - extract_fields(schema: dict, ocr_text: str) -> dict
+- LLMAdapter MUST use structured output (JSON mode) to satisfy the provided schema
 - StoragePort methods to store extraction results
 
 ### 10.5 Services requirements
 - ExtractionService
   - extract_fields_for_job(job_id) -> None
-  - Select extractor per file (label/doc_type)
+  - Fetch label schema from storage and hydrate the extractor per file
+  - Pass schema + OCR text to LLMPort for structured output
   - Store extraction results
 - NamingProposalService
   - preview_naming(job_id) -> list[RenameOp] + warnings
-  - Build proposed filenames deterministically
+  - Build proposed filenames deterministically using label naming_template
   - Resolve collisions against folder existing names
 
 ### 10.6 Storage changes (SQLite)
 - Add tables:
-  - label_extractor_config(label_id TEXT PRIMARY KEY, extractor_key TEXT, naming_template TEXT, updated_at TEXT)
-  - extractions(job_id TEXT, file_id TEXT, extractor_key TEXT, fields_json TEXT, confidences_json TEXT, updated_at TEXT)
+  - label_extractor_config(label_id TEXT PRIMARY KEY, naming_template TEXT, updated_at TEXT)
+  - extractions(job_id TEXT, file_id TEXT, schema_json TEXT, fields_json TEXT, confidences_json TEXT, updated_at TEXT)
   - naming_previews(job_id TEXT, file_id TEXT, proposed_name TEXT, warnings_json TEXT, updated_at TEXT) (optional cache)
 
 ### 10.7 UI requirements
 - Labels page:
-  - For each label: choose extractor_key from dropdown (e.g., CIVIL_ID_FRONT, GENERIC)
-  - Optional: set naming template override (advanced; can be text input)
+  - For each label: define extraction_schema (JSON) and naming_template
 - Job page:
   - Button: “Extract fields”
   - Button: “Preview auto names”
@@ -556,12 +576,10 @@ For each file:
 - Report inventory includes counts per label and per doc type
 
 ### 11.2 Consolidation rules (deterministic)
-- For each report field (e.g., “Name”, “Civil ID”):
-  - Collect candidates from extraction outputs across files
-  - Score candidates by:
-    - extractor/doc priority (e.g., CIVIL_ID_FRONT > CONTRACT > INVOICE)
-    - field confidence
-    - frequency across files
+- Consolidation is dynamic across all extracted keys:
+  - Collect all unique keys found across all extracted documents in a job
+  - For each key, aggregate candidates from extraction outputs across files
+  - Score candidates by confidence and frequency across files
   - Choose best candidate if score clearly highest
   - If multiple strong candidates -> “MULTIPLE” and list in Notes
   - If no candidates -> “UNKNOWN"
