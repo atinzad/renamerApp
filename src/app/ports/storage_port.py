@@ -26,3 +26,9 @@ class StoragePort(Protocol):
 
     def clear_last_undo_log(self, job_id: str) -> None:
         """Remove the most recent undo log for a job."""
+
+    def set_job_report_file_id(self, job_id: str, report_file_id: str) -> None:
+        """Persist the report file id for a job."""
+
+    def get_job_report_file_id(self, job_id: str) -> str | None:
+        """Return the report file id for a job, if any."""

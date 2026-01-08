@@ -38,7 +38,7 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT job_id, folder_id, created_at, status
+                    SELECT job_id, folder_id, created_at, status, report_file_id
                     FROM jobs
                     WHERE job_id = ?
                     """,
@@ -51,6 +51,7 @@ class SQLiteStorage(StoragePort):
                 folder_id=row[1],
                 created_at=datetime.fromisoformat(row[2]),
                 status=row[3],
+                report_file_id=row[4],
             )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch job") from exc
@@ -160,6 +161,37 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to clear undo log") from exc
 
+    def set_job_report_file_id(self, job_id: str, report_file_id: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET report_file_id = ?
+                    WHERE job_id = ?
+                    """,
+                    (report_file_id, job_id),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to update report file id") from exc
+
+    def get_job_report_file_id(self, job_id: str) -> str | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT report_file_id
+                    FROM jobs
+                    WHERE job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return row[0]
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch report file id") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -169,7 +201,8 @@ class SQLiteStorage(StoragePort):
                         job_id TEXT PRIMARY KEY,
                         folder_id TEXT,
                         created_at TEXT,
-                        status TEXT
+                        status TEXT,
+                        report_file_id TEXT
                     )
                     """
                 )
@@ -203,6 +236,11 @@ class SQLiteStorage(StoragePort):
                     )
                     """
                 )
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+                }
+                if "report_file_id" not in columns:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN report_file_id TEXT")
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to initialize storage schema") from exc
 

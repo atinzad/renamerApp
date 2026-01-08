@@ -15,6 +15,7 @@ class Job:
     folder_id: str
     created_at: datetime
     status: str
+    report_file_id: str | None = None
 
 
 @dataclass
