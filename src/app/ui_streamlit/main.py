@@ -50,6 +50,7 @@ def _init_state() -> None:
     st.session_state.setdefault("oauth_auth_url", None)
     st.session_state.setdefault("oauth_state", None)
     st.session_state.setdefault("manual_access_token", "")
+    st.session_state.setdefault("report_preview", "")
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -450,11 +451,6 @@ def main() -> None:
         except Exception as exc:
             st.error(f"List files failed: {exc}")
 
-    job_id = st.session_state.get("job_id")
-    if job_id:
-        st.subheader("Job")
-        st.write(f"Job ID: {job_id}")
-
     files = st.session_state.get("files", [])
     if files:
         st.subheader("Files")
@@ -476,6 +472,42 @@ def main() -> None:
                 edits[file_ref.file_id] = new_name
     else:
         edits = {}
+
+    job_id = st.session_state.get("job_id")
+    if job_id:
+        st.subheader("Job")
+        st.write(f"Job ID: {job_id}")
+
+        report_cols = st.columns(2)
+        preview_report_clicked = report_cols[0].button("Preview Report")
+        write_report_clicked = report_cols[1].button(
+            "Write Report to Folder",
+            disabled=job_id is None,
+        )
+        if preview_report_clicked:
+            try:
+                token = _ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                report_text = services["report_service"].preview_report(job_id)
+                st.session_state["report_preview"] = report_text
+                st.success("Report preview generated.")
+            except Exception as exc:
+                st.error(f"Report preview failed: {exc}")
+
+        st.text_area(
+            "Report Preview",
+            value=st.session_state.get("report_preview", ""),
+            height=300,
+        )
+
+        if write_report_clicked:
+            try:
+                token = _ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                report_file_id = services["report_service"].write_report(job_id)
+                st.success(f"Report uploaded. File ID: {report_file_id}")
+            except Exception as exc:
+                st.error(f"Report upload failed: {exc}")
 
     if preview_clicked:
         try:
