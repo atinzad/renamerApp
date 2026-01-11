@@ -38,7 +38,10 @@ def test_preview_and_write_report() -> None:
     drive.upload_text_file.return_value = "report-file-123"
 
     service = ReportService(drive=drive, storage=storage)
-    with patch.object(ReportService, "_local_now_iso", return_value="2025-01-01T12:00:00+00:00"):
+    with patch(
+        "app.services.time_utils.now_local_iso",
+        return_value="2025-01-01T12:00:00+00:00",
+    ):
         report_text = service.preview_report(job.job_id)
         assert "REPORT_VERSION: 1" in report_text
         assert "JOB_ID: job-123" in report_text

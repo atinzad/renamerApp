@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from app.domain.report_rendering import render_increment2_report
 from app.ports.drive_port import DrivePort
 from app.ports.storage_port import StoragePort
+from app.services.time_utils import local_date_yyyy_mm_dd, now_local_iso
 
 
 class ReportService:
@@ -24,7 +23,7 @@ class ReportService:
             }
             for index, file_ref in enumerate(job_files)
         ]
-        generated_at_local_iso = self._local_now_iso()
+        generated_at_local_iso = now_local_iso()
         return render_increment2_report(
             job_id=job.job_id,
             folder_id=job.folder_id,
@@ -46,13 +45,5 @@ class ReportService:
         return job
 
     @staticmethod
-    def _local_now_iso() -> str:
-        return datetime.now().astimezone().isoformat()
-
-    @staticmethod
-    def _report_filename(created_at: datetime) -> str:
-        if created_at.tzinfo is None:
-            local_date = created_at.date()
-        else:
-            local_date = created_at.astimezone().date()
-        return f"REPORT_{local_date.isoformat()}.txt"
+    def _report_filename(created_at) -> str:
+        return f"REPORT_{local_date_yyyy_mm_dd(created_at)}.txt"
