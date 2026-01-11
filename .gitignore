@@ -1,6 +1,7 @@
 # Project-specific
 AGENTS.md
 .env
+HANDOFF.md
 
 # OS/editor
 .DS_Store
