@@ -1,14 +1,7 @@
-# Google Drive Image Renamer (Increment 1)
+# Google Drive Image Renamer
 
-This project provides the Increment 1 foundation for renaming images in a Google
-Drive folder. It includes domain logic, ports, adapters (Google Drive + SQLite),
-and a minimal Streamlit UI for manual rename preview, apply, and undo.
-
-Increment 1 scope:
-- Create jobs and list files from a folder
-- Preview manual rename plan with sanitization and collision handling
-- Apply renames and save an undo log
-- Undo the last rename operation
+Rename files in a Google Drive folder with a Streamlit UI. Preview changes, apply
+renames, undo the last rename, and generate/upload a per-file report.
 
 ## Project Layout
 - `src/app/domain/` — dataclasses and pure rename logic
@@ -33,54 +26,54 @@ source .venv/bin/activate
 PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 ```
 
-3) In the UI, enter:
-- Access Token (Google Drive API v3 bearer token)
-- Folder ID (Drive folder to scan)
-- SQLite Path (defaults to `./app.db`)
-
-Then use:
-- List Files — loads files into a job
-- Preview — shows the rename plan
-- Apply Rename — renames files and saves undo
-- Undo Rename — reverts the last rename batch
-
 ## Authentication (OAuth)
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
 Recommended: use the built-in OAuth flow so you do not have to paste access tokens.
 
-### Optional local config (.env)
-The app can prefill OAuth Client ID, OAuth Client Secret, and Folder ID from a local `.env` file.
-Copy `.env.example` to `.env` and edit it with your values. The `.env` file is ignored by git.
+### Google Cloud setup (OAuth)
+1) Enable the Google Drive API:
+   https://console.cloud.google.com/apis/library/drive.googleapis.com
+2) Configure the OAuth consent screen:
+   https://console.cloud.google.com/apis/credentials/consent
+   - If the consent screen is in Testing, add your Google account as a Test user.
+3) Create OAuth credentials (Web application is recommended):
+   https://console.cloud.google.com/apis/credentials
+   - Authorized redirect URI: `http://localhost:8080/`
 
-Steps:
-1) In Google Cloud Console, enable the Google Drive API in the same project as the OAuth client.
-2) Create OAuth credentials (Desktop or Web).
-3) Add the redirect URI: `http://localhost:8080/`.
-4) If the consent screen is in Testing, add your Google account as a Test user.
-5) In the UI, enter the Client ID and Client Secret, then click "Sign in with Google".
-
-The app stores the refresh token securely in the OS keychain via `keyring`.
-Manual access token entry is still available as a fallback.
+### Local .env setup
+Copy the example file and add your values:
+```bash
+cp .env.example .env
+```
+Fill in:
+```
+OAUTH_CLIENT_ID=...
+OAUTH_CLIENT_SECRET=...
+FOLDER_ID=...
+GOOGLE_DRIVE_ACCESS_TOKEN=...   # optional fallback
+SQLITE_PATH=./app.db            # optional override
+```
+The `.env` file is ignored by git.
 
 ### Manual OAuth code flow (no localhost callback)
-If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM),
-use the manual OAuth code flow:
-1) Click "Sign in with Google" to generate the authorization link.
+If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM):
+1) Click **Sign in with Google** to generate the authorization link.
 2) Complete consent and copy the redirect URL (or the `code=` value).
-3) Paste the redirect URL in "Redirect URL (optional)" and click "Extract code".
-4) Click "Exchange code" to obtain a session access token.
+3) Paste the redirect URL in **Redirect URL** and click **Extract token**.
 
-### Sharing with end users
-To let users sign in without being added as Test users, publish the OAuth consent screen.
-This requires completing Google's OAuth verification for sensitive scopes like Drive.
-Until verification is approved, only Test users can authorize the app.
+## Using the UI (Step-by-step)
+1) Enter OAuth Client ID and Secret (auto-filled from `.env` if present).
+2) Click **Sign in with Google** and authorize.
+3) Enter **Folder ID or URL** (auto-filled from `.env` if present).
+4) Click **List Files** to create a job and load files.
+5) Update file names in **Manual Rename Editor** (blank means no change).
+6) Click **Preview** to see the rename plan.
+7) Click **Apply Rename** to rename files in Drive.
+8) Click **Undo Rename** to revert the last rename batch.
+9) Click **Preview Report** to generate the report text.
+10) Click **Write Report to Folder** to upload the report.
 
-## Increment 2 Report (Preview + Upload)
-Increment 2 adds a per-file `REPORT_YYYY-MM-DD.txt` with placeholder extraction blocks.
-How to use in the UI:
-- After listing files, click **Preview Report** to generate the text.
-- Click **Write Report to Folder** to upload the report to Drive.
-Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) in Increment 2.
+Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) until later increments.
 
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.
