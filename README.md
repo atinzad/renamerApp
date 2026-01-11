@@ -75,6 +75,13 @@ To let users sign in without being added as Test users, publish the OAuth consen
 This requires completing Google's OAuth verification for sensitive scopes like Drive.
 Until verification is approved, only Test users can authorize the app.
 
+## Increment 2 Report (Preview + Upload)
+Increment 2 adds a per-file `REPORT_YYYY-MM-DD.txt` with placeholder extraction blocks.
+How to use in the UI:
+- After listing files, click **Preview Report** to generate the text.
+- Click **Write Report to Folder** to upload the report to Drive.
+Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) in Increment 2.
+
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.
 - Dependencies are defined in `pyproject.toml`.
