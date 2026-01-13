@@ -19,7 +19,8 @@ class ReportService:
                 "file_id": file_ref.file_id,
                 "name": file_ref.name,
                 "mime_type": file_ref.mime_type,
-                "sort_index": index,
+                "sort_index": file_ref.sort_index if file_ref.sort_index is not None else index,
+                "extracted_text": self._get_extracted_text(job_id, file_ref.file_id),
             }
             for index, file_ref in enumerate(job_files)
         ]
@@ -43,6 +44,12 @@ class ReportService:
         if job is None:
             raise RuntimeError(f"Job not found: {job_id}")
         return job
+
+    def _get_extracted_text(self, job_id: str, file_id: str) -> str:
+        result = self._storage.get_ocr_result(job_id, file_id)
+        if result is None or not result.text.strip():
+            return ""
+        return result.text
 
     @staticmethod
     def _report_filename(created_at) -> str:

@@ -7,6 +7,7 @@ class FileRef:
     file_id: str
     name: str
     mime_type: str
+    sort_index: int | None = None
 
 
 @dataclass

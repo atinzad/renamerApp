@@ -38,3 +38,42 @@ def test_rendering_order_and_format() -> None:
         assert "EXTRACTED_FIELDS_JSON:\n<<<PENDING_EXTRACTION>>>" in block
 
     assert output.endswith("\n")
+
+
+def test_rendering_uses_extracted_text_when_present() -> None:
+    files = [
+        {
+            "sort_index": 1,
+            "name": "a.jpg",
+            "file_id": "f1",
+            "mime_type": "image/jpeg",
+            "extracted_text": "Hello OCR",
+        }
+    ]
+    output = render_increment2_report(
+        job_id="job-123",
+        folder_id="folder-abc",
+        generated_at_local_iso="2025-01-01T12:00:00",
+        files=files,
+    )
+    assert "EXTRACTED_TEXT:\nHello OCR" in output
+    assert "EXTRACTED_FIELDS_JSON:\n<<<PENDING_EXTRACTION>>>" in output
+
+
+def test_rendering_falls_back_for_blank_extracted_text() -> None:
+    files = [
+        {
+            "sort_index": 1,
+            "name": "a.jpg",
+            "file_id": "f1",
+            "mime_type": "image/jpeg",
+            "extracted_text": "   \n",
+        }
+    ]
+    output = render_increment2_report(
+        job_id="job-123",
+        folder_id="folder-abc",
+        generated_at_local_iso="2025-01-01T12:00:00",
+        files=files,
+    )
+    assert "EXTRACTED_TEXT:\n<<<PENDING_EXTRACTION>>>" in output

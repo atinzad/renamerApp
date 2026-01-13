@@ -40,6 +40,12 @@ def render_increment2_report(
         f"GENERATED_AT: {generated_at_local_iso}",
     ]
     for index, item in enumerate(ordered_files, start=1):
+        extracted_text = _get_value(item, "extracted_text", "")
+        extracted_text_value = (
+            str(extracted_text)
+            if extracted_text is not None and str(extracted_text).strip()
+            else _PENDING_TOKEN
+        )
         lines.extend(
             [
                 "--- FILE START ---",
@@ -49,7 +55,7 @@ def render_increment2_report(
                 f"MIME_TYPE: {_get_value(item, 'mime_type', '')}",
                 "",
                 "EXTRACTED_TEXT:",
-                _PENDING_TOKEN,
+                extracted_text_value,
                 "",
                 "EXTRACTED_FIELDS_JSON:",
                 _PENDING_TOKEN,

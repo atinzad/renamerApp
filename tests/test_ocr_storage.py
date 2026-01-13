@@ -18,3 +18,17 @@ def test_save_and_get_ocr_result_overwrites(tmp_path) -> None:
     storage.save_ocr_result(job_id, file_id, second)
     fetched_again = storage.get_ocr_result(job_id, file_id)
     assert fetched_again == second
+
+
+def test_save_and_get_ocr_result_with_null_confidence(tmp_path) -> None:
+    db_path = tmp_path / "test.db"
+    storage = SQLiteStorage(str(db_path))
+
+    job_id = "job-1"
+    file_id = "file-1"
+    result = OCRResult(text="only text", confidence=None)
+
+    storage.save_ocr_result(job_id, file_id, result)
+    fetched = storage.get_ocr_result(job_id, file_id)
+
+    assert fetched == result

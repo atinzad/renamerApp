@@ -66,7 +66,13 @@ class SQLiteStorage(StoragePort):
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     [
-                        (job_id, file_ref.file_id, file_ref.name, file_ref.mime_type, index)
+                        (
+                            job_id,
+                            file_ref.file_id,
+                            file_ref.name,
+                            file_ref.mime_type,
+                            file_ref.sort_index if file_ref.sort_index is not None else index,
+                        )
                         for index, file_ref in enumerate(files)
                     ],
                 )
@@ -78,14 +84,17 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT file_id, name, mime_type
+                    SELECT file_id, name, mime_type, sort_index
                     FROM job_files
                     WHERE job_id = ?
                     ORDER BY sort_index ASC
                     """,
                     (job_id,),
                 ).fetchall()
-            return [FileRef(file_id=row[0], name=row[1], mime_type=row[2]) for row in rows]
+            return [
+                FileRef(file_id=row[0], name=row[1], mime_type=row[2], sort_index=row[3])
+                for row in rows
+            ]
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch job files") from exc
 
