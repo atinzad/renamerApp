@@ -47,11 +47,14 @@ class GoogleDriveAdapter(DrivePort):
             self._raise_for_status(response, context="list folder files")
             payload = response.json()
             for item in payload.get("files", []):
+                mime_type = item.get("mimeType", "")
+                if mime_type == "text/plain":
+                    continue
                 files.append(
                     FileRef(
                         file_id=item.get("id", ""),
                         name=item.get("name", ""),
-                        mime_type=item.get("mimeType", ""),
+                        mime_type=mime_type,
                     )
                 )
             page_token = payload.get("nextPageToken")

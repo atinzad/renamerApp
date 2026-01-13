@@ -51,6 +51,8 @@ def _init_state() -> None:
     st.session_state.setdefault("oauth_state", None)
     st.session_state.setdefault("manual_access_token", "")
     st.session_state.setdefault("report_preview", "")
+    st.session_state.setdefault("ocr_refresh_token", "init")
+    st.session_state.setdefault("ocr_ready", False)
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -447,43 +449,38 @@ def main() -> None:
             st.session_state["job_id"] = job.job_id
             st.session_state["files"] = files
             st.session_state["preview_ops"] = []
+            st.session_state["ocr_ready"] = False
             st.info(f"Listed {len(files)} files from Drive. Job ID: {job.job_id}")
         except Exception as exc:
             st.error(f"List files failed: {exc}")
-
-    files = st.session_state.get("files", [])
-    if files:
-        st.subheader("Files")
-        for file_ref in files:
-            st.write(f"{file_ref.name} ({file_ref.file_id})")
-
-        st.subheader("Manual Rename Editor")
-        edits = {}
-        for file_ref in files:
-            key = f"edit_{file_ref.file_id}"
-            st.markdown(f"New name for: **{file_ref.name}**")
-            new_name = st.text_input(
-                " ",
-                value=st.session_state.get(key, ""),
-                key=key,
-                label_visibility="collapsed",
-            )
-            if new_name.strip():
-                edits[file_ref.file_id] = new_name
-    else:
-        edits = {}
 
     job_id = st.session_state.get("job_id")
     if job_id:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
 
-        report_cols = st.columns(2)
-        preview_report_clicked = report_cols[0].button("Preview Report")
-        write_report_clicked = report_cols[1].button(
+        report_cols = st.columns(3)
+        run_ocr_clicked = report_cols[0].button(
+            "Run OCR",
+            disabled=job_id is None,
+        )
+        preview_report_clicked = report_cols[1].button("Preview Report")
+        write_report_clicked = report_cols[2].button(
             "Write Report to Folder",
             disabled=job_id is None,
         )
+        if run_ocr_clicked:
+            try:
+                token = _ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                with st.spinner("Running OCR..."):
+                    services["ocr_service"].run_ocr(job_id)
+                st.session_state["files"] = services["jobs_service"].list_files(job_id)
+                st.session_state["ocr_refresh_token"] = str(uuid4())
+                st.session_state["ocr_ready"] = True
+                st.success("OCR completed.")
+            except Exception as exc:
+                st.error(f"OCR failed: {exc}")
         if preview_report_clicked:
             try:
                 token = _ensure_access_token(access_token, client_id, client_secret)
@@ -508,6 +505,44 @@ def main() -> None:
                 st.success(f"Report uploaded. File ID: {report_file_id}")
             except Exception as exc:
                 st.error(f"Report upload failed: {exc}")
+
+    files = st.session_state.get("files", [])
+    edits: dict[str, str] = {}
+    if files:
+        st.subheader("Files")
+        for file_ref in files:
+            st.markdown(f"**{file_ref.name}** ({file_ref.file_id})")
+            rename_key = f"edit_{file_ref.file_id}"
+            new_name = st.text_input(
+                "Rename file",
+                value=st.session_state.get(rename_key, ""),
+                key=rename_key,
+            )
+            if new_name.strip():
+                edits[file_ref.file_id] = new_name
+            if job_id and st.session_state.get("ocr_ready"):
+                with st.expander("View OCR"):
+                    try:
+                        token = _ensure_access_token(access_token, client_id, client_secret)
+                        services = _get_services(token, sqlite_path)
+                        ocr_result = services["storage"].get_ocr_result(job_id, file_ref.file_id)
+                        ocr_text = ocr_result.text if ocr_result else ""
+                        if not ocr_text.strip():
+                            st.info("No OCR yet.")
+                        refresh_token = st.session_state.get("ocr_refresh_token", "init")
+                        area_key = f"ocr_{job_id}_{file_ref.file_id}_{refresh_token}"
+                        st.session_state[area_key] = ocr_text
+                        st.text_area(
+                            "OCR Text",
+                            value=st.session_state[area_key],
+                            height=200,
+                            key=area_key,
+                            disabled=True,
+                        )
+                    except Exception as exc:
+                        st.error(f"OCR lookup failed: {exc}")
+    else:
+        edits = {}
 
     if preview_clicked:
         try:

@@ -51,6 +51,27 @@ def test_run_ocr_filters_to_matching_ids() -> None:
     )
 
 
+def test_run_ocr_skips_non_images() -> None:
+    job_files = [
+        FileRef(file_id="f1", name="a.jpg", mime_type="image/jpeg"),
+        FileRef(file_id="f2", name="notes.txt", mime_type="text/plain"),
+    ]
+    storage = Mock()
+    storage.get_job_files.return_value = job_files
+    drive = Mock()
+    drive.download_file_bytes.return_value = b"a"
+    ocr = Mock()
+    ocr.extract_text.return_value = OCRResult(text="text-a", confidence=None)
+
+    service = OCRService(drive=drive, ocr=ocr, storage=storage)
+    service.run_ocr("job-1")
+
+    drive.download_file_bytes.assert_called_once_with("f1")
+    storage.save_ocr_result.assert_called_once_with(
+        "job-1", "f1", OCRResult(text="text-a", confidence=None)
+    )
+
+
 def test_run_ocr_sorts_by_name_then_id_when_index_ties() -> None:
     job_files = [
         FileRef(file_id="f2", name="b.png", mime_type="image/png", sort_index=1),

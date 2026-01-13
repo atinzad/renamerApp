@@ -17,6 +17,7 @@ class OCRService:
             {
                 "file_id": file_ref.file_id,
                 "name": file_ref.name,
+                "mime_type": file_ref.mime_type,
                 "sort_index": file_ref.sort_index if file_ref.sort_index is not None else index,
             }
             for index, file_ref in enumerate(job_files)
@@ -27,8 +28,14 @@ class OCRService:
             target_ids = {file_id for file_id in file_ids}
             target_rows = [row for row in file_rows if row["file_id"] in target_ids]
 
+        image_rows = [
+            row
+            for row in target_rows
+            if str(row.get("mime_type", "")).startswith("image/")
+            or str(row.get("mime_type", "")) == "application/pdf"
+        ]
         ordered_rows = sorted(
-            target_rows,
+            image_rows,
             key=lambda row: (row["sort_index"], row["name"], row["file_id"]),
         )
         for row in ordered_rows:

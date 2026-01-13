@@ -22,6 +22,18 @@ class TesseractOCRAdapter(OCRPort):
             ) from exc
 
         try:
+            if self._is_pdf_bytes(image_bytes):
+                images = self._pdf_to_images(image_bytes)
+                if not images:
+                    return OCRResult(text="", confidence=None)
+                texts = []
+                confidences = []
+                for image in images:
+                    texts.append(pytesseract.image_to_string(image, lang=self._language))
+                    confidences.append(self._mean_confidence(pytesseract, image))
+                text = "\n\n".join(texts)
+                confidence = self._mean_confidence_values(confidences)
+                return OCRResult(text=text, confidence=confidence)
             image = Image.open(io.BytesIO(image_bytes))
         except Exception as exc:
             raise RuntimeError("Failed to load image bytes for OCR.") from exc
@@ -54,3 +66,25 @@ class TesseractOCRAdapter(OCRPort):
         if not conf_values:
             return None
         return sum(conf_values) / len(conf_values)
+
+    def _mean_confidence_values(self, values: list[float | None]) -> float | None:
+        filtered = [value for value in values if value is not None]
+        if not filtered:
+            return None
+        return sum(filtered) / len(filtered)
+
+    def _is_pdf_bytes(self, image_bytes: bytes) -> bool:
+        return image_bytes.lstrip().startswith(b"%PDF")
+
+    def _pdf_to_images(self, pdf_bytes: bytes) -> list[object]:
+        try:
+            from pdf2image import convert_from_bytes
+        except ImportError as exc:
+            raise RuntimeError(
+                "pdf2image is required to OCR PDF files. Install with: pip install pdf2image. "
+                "Poppler is also required on your system."
+            ) from exc
+        try:
+            return convert_from_bytes(pdf_bytes)
+        except Exception as exc:
+            raise RuntimeError("Failed to convert PDF bytes to images.") from exc
