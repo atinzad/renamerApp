@@ -9,6 +9,9 @@ class DrivePort(Protocol):
     def list_folder_files(self, folder_id: str) -> list[FileRef]:
         """Return files for a folder in stable order."""
 
+    def download_file_bytes(self, file_id: str) -> bytes:
+        """Download file bytes by id."""
+
     def rename_file(self, file_id: str, new_name: str) -> None:
         """Rename a file by id."""
 

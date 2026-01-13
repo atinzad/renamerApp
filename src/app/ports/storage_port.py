@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.domain.models import FileRef, Job, UndoLog
+from app.domain.models import FileRef, Job, OCRResult, UndoLog
 
 
 class StoragePort(Protocol):
@@ -32,3 +32,9 @@ class StoragePort(Protocol):
 
     def get_job_report_file_id(self, job_id: str) -> str | None:
         """Return the report file id for a job, if any."""
+
+    def save_ocr_result(self, job_id: str, file_id: str, result: OCRResult) -> None:
+        """Persist OCR output for a file."""
+
+    def get_ocr_result(self, job_id: str, file_id: str) -> OCRResult | None:
+        """Return OCR output for a file, if any."""
