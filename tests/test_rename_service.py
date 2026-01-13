@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -58,7 +58,7 @@ def test_undo_last_renames_in_reverse_and_clears() -> None:
         RenameOp(file_id="file-1", old_name="a.jpg", new_name="b.jpg"),
         RenameOp(file_id="file-2", old_name="c.jpg", new_name="d.jpg"),
     ]
-    undo_log = UndoLog(job_id=job.job_id, created_at=datetime.utcnow(), ops=ops)
+    undo_log = UndoLog(job_id=job.job_id, created_at=datetime.now(timezone.utc), ops=ops)
     storage = Mock()
     storage.get_job.return_value = job
     storage.get_last_undo_log.return_value = undo_log

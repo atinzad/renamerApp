@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import io
+
 import json
 
 import requests
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
 
 from app.domain.models import FileRef
 from app.ports.drive_port import DrivePort
@@ -61,6 +67,29 @@ class GoogleDriveAdapter(DrivePort):
             timeout=20,
         )
         self._raise_for_status(response, context="rename file")
+
+    def download_file_bytes(self, file_id: str) -> bytes:
+        try:
+            credentials = Credentials(token=self._access_token)
+            service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+            request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            return buffer.getvalue()
+        except HttpError as exc:
+            status = exc.resp.status
+            if status in (401, 403):
+                raise RuntimeError("Auth failed while attempting to download file bytes.") from exc
+            if status == 404:
+                raise RuntimeError("Resource not found or no access while attempting to download file bytes.") from exc
+            raise RuntimeError(
+                f"Drive API error {status} while attempting to download file bytes."
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError("Failed to download file bytes.") from exc
 
     def upload_text_file(self, folder_id: str, filename: str, content: str) -> str:
         metadata = {"name": filename, "parents": [folder_id], "mimeType": "text/plain"}

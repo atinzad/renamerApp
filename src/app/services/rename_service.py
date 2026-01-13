@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.domain.models import RenameOp, UndoLog
 from app.domain.rename_logic import (
@@ -38,7 +38,7 @@ class RenameService:
         if job is None:
             raise RuntimeError(f"Job not found: {job_id}")
 
-        undo = UndoLog(job_id=job_id, created_at=datetime.utcnow(), ops=ops)
+        undo = UndoLog(job_id=job_id, created_at=datetime.now(timezone.utc), ops=ops)
         self._storage.save_undo_log(undo)
 
         for op in ops:
