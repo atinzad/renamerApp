@@ -322,7 +322,7 @@ Notes:
 
 ## 7. INCREMENT 3 SPEC — OCR for Job Files (Text Extraction)
 ### 7.1 Scope (MUST implement)
-- Download each image file’s bytes from Drive
+- Download each image/PDF file’s bytes from Drive
 - Run OCR to extract text
 - Store OCR text per file in storage
 - UI can display OCR text per file
@@ -348,6 +348,9 @@ Notes:
     - download bytes
     - call OCRPort.extract_text
     - save OCRResult to storage
+  - OCR targets:
+    - `image/*` and `application/pdf` files
+    - skip `text/plain` files entirely
 
 ### 7.6 Storage changes (SQLite)
 - Add table:
@@ -359,11 +362,17 @@ Notes:
 ### 7.7 UI requirements
 - Button: “Run OCR”
 - Per file: “View OCR” toggle/expand showing OCR text
+  - View OCR appears after OCR completes for the active job
 
 ### 7.8 Acceptance criteria
 - OCR text stored for each processed file
 - OCR can be rerun (overwrites prior result)
 - App still supports manual rename/undo and report upload from previous increments
+ - Report EXTRACTED_TEXT uses stored OCR text when available; otherwise placeholder
+
+### 7.9 OCR dependencies (implementation guidance)
+- Python deps: `pytesseract`, `pillow`, `pdf2image`
+- System deps (Ubuntu): `tesseract-ocr`, `tesseract-ocr-ara`, `poppler-utils`
 
 ## 8. INCREMENT 4 SPEC — User Labels (“Training”) + Similarity-Based Classification
 ### 8.1 Scope (MUST implement)
