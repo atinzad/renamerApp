@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from uuid import uuid4
 
-from app.domain.models import FileRef, Job, RenameOp, UndoLog
+from app.domain.models import FileRef, Job, OCRResult, RenameOp, UndoLog
 from app.ports.storage_port import StoragePort
 
 
@@ -192,6 +192,48 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch report file id") from exc
 
+    def save_ocr_result(self, job_id: str, file_id: str, result: OCRResult) -> None:
+        try:
+            updated_at = datetime.now().isoformat()
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ocr_results(job_id, file_id, ocr_text, ocr_confidence, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        ocr_text = excluded.ocr_text,
+                        ocr_confidence = excluded.ocr_confidence,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        job_id,
+                        file_id,
+                        result.text,
+                        result.confidence,
+                        updated_at,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to save OCR result") from exc
+
+    def get_ocr_result(self, job_id: str, file_id: str) -> OCRResult | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT ocr_text, ocr_confidence
+                    FROM ocr_results
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return OCRResult(text=row[0], confidence=row[1])
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch OCR result") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -233,6 +275,18 @@ class SQLiteStorage(StoragePort):
                         old_name TEXT,
                         new_name TEXT,
                         op_index INTEGER
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ocr_results(
+                        job_id TEXT,
+                        file_id TEXT,
+                        ocr_text TEXT,
+                        ocr_confidence REAL,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
                     )
                     """
                 )
