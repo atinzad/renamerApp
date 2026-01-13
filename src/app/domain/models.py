@@ -30,3 +30,9 @@ class UndoLog:
     job_id: str
     created_at: datetime
     ops: list[RenameOp]
+
+
+@dataclass
+class OCRResult:
+    text: str
+    confidence: float | None
