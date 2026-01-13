@@ -1,7 +1,8 @@
 # Google Drive Image Renamer
 
 Rename files in a Google Drive folder with a Streamlit UI. Preview changes, apply
-renames, undo the last rename, and generate/upload a per-file report.
+renames, undo the last rename, run OCR (images + PDFs), and generate/upload a per-file
+report that includes OCR text when available.
 
 ## Project Layout
 - `src/app/domain/` — dataclasses and pure rename logic
@@ -16,12 +17,18 @@ renames, undo the last rename, and generate/upload a per-file report.
 uv sync
 ```
 
-2) Activate the virtual environment:
+2) Install system OCR dependencies (Ubuntu):
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-ara poppler-utils
+```
+
+3) Activate the virtual environment:
 ```bash
 source .venv/bin/activate
 ```
 
-3) Start the Streamlit UI:
+4) Start the Streamlit UI:
 ```bash
 PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 ```
@@ -55,6 +62,14 @@ SQLITE_PATH=./app.db            # optional override
 ```
 The `.env` file is ignored by git.
 
+### OCR Language
+Set `OCR_LANG` to control Tesseract languages (default: `ara+eng`).
+Examples:
+```
+OCR_LANG=eng
+OCR_LANG=ara+eng
+```
+
 ### Manual OAuth code flow (no localhost callback)
 If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM):
 1) Click **Sign in with Google** to generate the authorization link.
@@ -66,12 +81,14 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
 2) Click **Sign in with Google** and authorize.
 3) Enter **Folder ID or URL** (auto-filled from `.env` if present).
 4) Click **List Files** to create a job and load files.
-5) Update file names in **Manual Rename Editor** (blank means no change).
+5) Update file names per file (blank means no change).
 6) Click **Preview** to see the rename plan.
 7) Click **Apply Rename** to rename files in Drive.
 8) Click **Undo Rename** to revert the last rename batch.
-9) Click **Preview Report** to generate the report text.
-10) Click **Write Report to Folder** to upload the report.
+9) Click **Run OCR** to process images and PDFs in the folder.
+10) Expand **View OCR** per file to see extracted text.
+11) Click **Preview Report** to generate the report text.
+12) Click **Write Report to Folder** to upload the report.
 
 Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) until later increments.
 
@@ -79,6 +96,12 @@ Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) until l
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.
 - Dependencies are defined in `pyproject.toml`.
 
+## Manual Verification Script
+Run a live end-to-end check (Drive + OCR + report preview):
+```bash
+env PYTHONPATH=src uv run python scripts/verify_increment3.py
+```
+
 ## Notes
-- Increment 1 only: no OCR, labels, or report generation.
-- The Drive adapter returns all files in the folder.
+- No labels, embeddings, LLMs, or auto-renaming from OCR (later increments).
+- The Drive adapter skips `text/plain` files when listing a folder.
