@@ -376,18 +376,12 @@ Notes:
 
 ## 8. INCREMENT 4 SPEC — User Labels (“Training”) + Similarity-Based Classification
 ### 8.1 Scope (MUST implement)
-- User can create, deactivate, and list labels
-- User can attach one or more example documents (Drive file IDs) to a label
-- For each example:
-  - OCR text must be stored (reuse OCRPort)
-  - A feature representation must be stored:
-    - Preferred: embedding vector of OCR text
-    - Fallback (if embeddings provider not configured): lexical fingerprint (token set)
-- Classify job files by matching them against label examples
-- Store per-file assigned label + confidence score
-- UI shows label assignments and allows manual override
-- Admin can define an extraction_schema (JSON object defining keys/types) and a naming_template
-  for every label created
+- User can create labels inline per job file
+- Labels are stored in a local `labels.json` file (gitignored)
+- Each label stores OCR text examples from files assigned to that label
+- Classify job files by matching OCR text against label examples (lexical similarity)
+- Store per-file classification results in UI state (label name, score, status)
+- Rename field auto-fills from label name with numbering + original extension
 
 ### 8.2 Non-goals (MUST NOT implement)
 - LLM doc-type classification (Increment 5)
@@ -427,21 +421,8 @@ Notes:
   - Still return MATCHED/NO_MATCH/AMBIGUOUS
 
 ### 8.6 Services requirements
-- LabelService
-  - create_label(name) -> Label
-  - deactivate_label(label_id) -> None
-  - list_labels() -> list[Label]
-  - attach_example(label_id, file_id) -> LabelExample
-  - process_examples(label_id | None) -> None
-    - OCR example files (if not already)
-    - compute embedding/token fingerprint
-    - save features
-- LabelClassificationService
-  - classify_job_files(job_id) -> None
-  - requires OCR results for job files
-  - for each file: compute embedding/tokens and match to label library
-  - store assigned label + match score + status
-  - override_file_label(job_id, file_id, label_id | None) -> None
+- Classification uses OCR text + label examples from `labels.json`
+- Embeddings-based classification and label storage services remain optional for later increments
 
 ### 8.7 Storage changes (SQLite)
 - Add tables:
@@ -459,49 +440,25 @@ Notes:
   - file_label_overrides(job_id TEXT, file_id TEXT, label_id TEXT, updated_at TEXT)
 
 ### 8.8 UI requirements
-- New “Labels” page:
-  - Create label (text input)
-  - List labels + deactivate
-  - Attach example (Drive file_id input)
-  - Show examples per label and whether processed
-  - Button: “Process examples” (runs OCR + embeddings/tokens)
-  - Validate extraction_schema and naming_template (via validate_schema_config) before saving label configuration
-- Job page:
-  - Button: “Classify using labels”
-  - Column: Assigned Label, Score, Status (MATCHED/AMBIGUOUS/NO_MATCH)
-  - Override dropdown: choose a label or clear
+- Single Job screen (no separate Labels page)
+- Per file:
+  - “Create new label” input + button (adds OCR example to `labels.json`)
+  - “Classify” dropdown sourced from `labels.json`
+  - Rename field auto-fills with label name + numbering + extension
+- Button: “Classify files” (runs lexical similarity over OCR text)
 
 ### 8.9 Acceptance criteria
-- User can create label and attach examples
-- Example processing stores features
-- Classification assigns labels to job files deterministically using similarity
-- Overrides persist and take precedence
+- User can create labels from job files and persist them in `labels.json`
+- Classification assigns labels deterministically using OCR text similarity
+- Rename field auto-fills from label name when classification succeeds
 
-### 8.10 Agent preset import/export (Seed mechanism)
-- On startup, if no labels exist, check for `presets.json` in the repo root
-- If present, auto-load label presets into storage
-- Services layer orchestrates auto-seed during initialization
-- StoragePort must support bulk insert for label presets
-- Provide export capability to write current labels to `presets.json`
+### 8.10 Label presets (temporary)
+- Labels are stored in `labels.json` in the repo root (gitignored)
+- Each label stores OCR text examples
+- This file is a temporary mechanism until LLM-based extraction is introduced
 
-### 8.11 Domain requirements (schema validation)
-- Domain must provide a validation function:
-  - validate_schema_config(schema_json, naming_template) -> list[str] | None
-  - validates schema_json is valid JSON
-  - validates schema_json follows a flat key-value pair structure
-  - ensures every placeholder in naming_template (e.g., {customer_name}) exists as a key in schema_json
-
-### 8.12 No-code schema builder UI/UX
-- Provide a dynamic list of rows where users enter:
-  - Field Name
-  - Data Type (String, Number, Date) via dropdown
-- Advanced Mode toggle:
-  - Switch to a Raw JSON Editor for power users
-  - Changes are kept in sync between both views
-- Serialization:
-  - The UI converts the visual list into extraction_schema_json before calling the service layer
-- UX helper:
-  - Provide “Copy Placeholder” buttons for each field to assist in naming_template creation
+### 8.11 Deferred schema configuration
+- extraction_schema and naming_template collection is deferred to a later increment
 
 ## 9. INCREMENT 5 SPEC — LLM Doc-Type Classification (Fallback for Unlabeled Files)
 ### 9.1 Scope (MUST implement)
