@@ -21,6 +21,8 @@ if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
 from app.container import build_services
+from app.domain.labels import AMBIGUOUS, MATCHED, NO_MATCH, decide_match
+from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
 
 _OAUTH_SCOPE = "https://www.googleapis.com/auth/drive"
 _REDIRECT_URI = "http://localhost:8080/"
@@ -53,6 +55,8 @@ def _init_state() -> None:
     st.session_state.setdefault("report_preview", "")
     st.session_state.setdefault("ocr_refresh_token", "init")
     st.session_state.setdefault("ocr_ready", False)
+    st.session_state.setdefault("label_selections", {})
+    st.session_state.setdefault("classification_results", {})
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -69,6 +73,91 @@ def _load_env_file(path: Path) -> dict[str, str]:
         if key:
             values[key] = value
     return values
+
+
+def _labels_path() -> Path:
+    return _REPO_ROOT / "labels.json"
+
+
+def _load_labels_json() -> list[dict]:
+    path = _labels_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _save_labels_json(labels: list[dict]) -> None:
+    path = _labels_path()
+    path.write_text(json.dumps(labels, indent=2, sort_keys=True))
+
+
+def _upsert_label_example(labels: list[dict], label_name: str, ocr_text: str) -> list[dict]:
+    normalized = label_name.strip()
+    if not normalized:
+        return labels
+    updated = False
+    for label in labels:
+        if label.get("name") == normalized:
+            examples = label.get("examples", [])
+            if ocr_text and ocr_text not in examples:
+                examples.append(ocr_text)
+            label["examples"] = examples
+            updated = True
+            break
+    if not updated:
+        labels.append({"name": normalized, "examples": [ocr_text] if ocr_text else []})
+    return labels
+
+
+def _build_suggested_names(
+    files: list, selections: dict[str, str | None]
+) -> dict[str, str]:
+    label_to_files: dict[str, list] = {}
+    for file_ref in files:
+        label = selections.get(file_ref.file_id)
+        if not label:
+            continue
+        label_to_files.setdefault(label, []).append(file_ref)
+
+    suggestions: dict[str, str] = {}
+    for label, label_files in label_to_files.items():
+        total = len(label_files)
+        for idx, file_ref in enumerate(label_files, start=1):
+            suffix = f"_{idx:02d}" if total > 1 else ""
+            extension = Path(file_ref.name).suffix
+            suggestions[file_ref.file_id] = f"{label}{suffix}{extension}"
+    return suggestions
+
+
+def _classify_with_labels(labels: list[dict], ocr_text: str) -> tuple[str | None, float, str]:
+    tokens = normalize_text_to_tokens(ocr_text)
+    if not tokens or not labels:
+        return None, 0.0, NO_MATCH
+    label_scores: list[tuple[str, float]] = []
+    for label in labels:
+        name = label.get("name")
+        examples = label.get("examples", [])
+        if not name or not examples:
+            continue
+        best_score = None
+        for example_text in examples:
+            example_tokens = normalize_text_to_tokens(example_text)
+            score = jaccard_similarity(tokens, example_tokens)
+            if best_score is None or score > best_score:
+                best_score = score
+        if best_score is not None:
+            label_scores.append((name, best_score))
+    if not label_scores:
+        return None, 0.0, NO_MATCH
+    label_scores.sort(key=lambda item: item[1], reverse=True)
+    best_label, best_score = label_scores[0]
+    second_score = label_scores[1][1] if len(label_scores) > 1 else None
+    status, _ = decide_match(best_label, best_score, second_score, 0.35, 0.02)
+    return best_label, best_score, status
 
 
 def _get_services(access_token: str, sqlite_path: str):
@@ -459,13 +548,14 @@ def main() -> None:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
 
-        report_cols = st.columns(3)
+        report_cols = st.columns(4)
         run_ocr_clicked = report_cols[0].button(
             "Run OCR",
             disabled=job_id is None,
         )
-        preview_report_clicked = report_cols[1].button("Preview Report")
-        write_report_clicked = report_cols[2].button(
+        classify_clicked = report_cols[1].button("Classify files")
+        preview_report_clicked = report_cols[2].button("Preview Report")
+        write_report_clicked = report_cols[3].button(
             "Write Report to Folder",
             disabled=job_id is None,
         )
@@ -505,14 +595,136 @@ def main() -> None:
                 st.success(f"Report uploaded. File ID: {report_file_id}")
             except Exception as exc:
                 st.error(f"Report upload failed: {exc}")
+        if classify_clicked:
+            if not st.session_state.get("ocr_ready"):
+                st.error("Run OCR first.")
+            else:
+                try:
+                    token = _ensure_access_token(access_token, client_id, client_secret)
+                    services = _get_services(token, sqlite_path)
+                    results: dict[str, dict] = {}
+                    labels_data = _load_labels_json()
+                    for file_ref in st.session_state.get("files", []):
+                        ocr_result = services["storage"].get_ocr_result(
+                            job_id, file_ref.file_id
+                        )
+                        if ocr_result is None or not ocr_result.text.strip():
+                            results[file_ref.file_id] = {
+                                "label": None,
+                                "score": 0.0,
+                                "status": NO_MATCH,
+                            }
+                            continue
+                        label, score, status = _classify_with_labels(
+                            labels_data, ocr_result.text
+                        )
+                        results[file_ref.file_id] = {
+                            "label": label,
+                            "score": score,
+                            "status": status,
+                        }
+                    st.session_state["classification_results"] = results
+                    current_selections = dict(st.session_state.get("label_selections", {}))
+                    for file_id, result in results.items():
+                        if result["status"] == MATCHED and result["label"]:
+                            current_selections[file_id] = result["label"]
+                        else:
+                            current_selections[file_id] = None
+                            rename_key = f"edit_{file_id}"
+                            st.session_state[rename_key] = ""
+                    st.session_state["label_selections"] = current_selections
+                    suggestions = _build_suggested_names(
+                        st.session_state.get("files", []), current_selections
+                    )
+                    for file_id, suggested in suggestions.items():
+                        rename_key = f"edit_{file_id}"
+                        if current_selections.get(file_id):
+                            st.session_state[rename_key] = suggested
+                    st.success("Classification completed.")
+                except Exception as exc:
+                    st.error(f"Classification failed: {exc}")
 
     files = st.session_state.get("files", [])
     edits: dict[str, str] = {}
+    label_selections = st.session_state.get("label_selections", {})
+    labels_data = _load_labels_json()
+    label_names = [label.get("name") for label in labels_data if label.get("name")]
+    classification_results = st.session_state.get("classification_results", {})
     if files:
         st.subheader("Files")
+        current_selections = dict(label_selections)
         for file_ref in files:
             st.markdown(f"**{file_ref.name}** ({file_ref.file_id})")
+            selection_key = f"label_select_{file_ref.file_id}"
+            label_options = ["(Clear)"] + label_names
+            current_label = current_selections.get(file_ref.file_id)
+            selected_index = (
+                label_options.index(current_label) if current_label in label_options else 0
+            )
+            choice = st.selectbox(
+                "Classify",
+                label_options,
+                index=selected_index,
+                key=selection_key,
+            )
+            selected_label = None if choice == "(Clear)" else choice
+            previous_label = current_selections.get(file_ref.file_id)
+            current_selections[file_ref.file_id] = selected_label
+            if selected_label and selected_label != previous_label and job_id:
+                try:
+                    token = _ensure_access_token(access_token, client_id, client_secret)
+                    services = _get_services(token, sqlite_path)
+                    ocr_result = services["storage"].get_ocr_result(job_id, file_ref.file_id)
+                    if ocr_result and ocr_result.text.strip():
+                        labels_data = _upsert_label_example(
+                            labels_data, selected_label, ocr_result.text
+                        )
+                        _save_labels_json(labels_data)
+                except Exception:
+                    pass
+
+            new_label_key = f"new_label_{file_ref.file_id}"
+            new_label = st.text_input(
+                "Create new label",
+                value=st.session_state.get(new_label_key, ""),
+                key=new_label_key,
+            )
+            if st.button("Create Label", key=f"create_label_{file_ref.file_id}"):
+                if not new_label.strip():
+                    st.error("Label name is required.")
+                elif not job_id:
+                    st.error("List files and run OCR before creating labels.")
+                else:
+                    try:
+                        token = _ensure_access_token(access_token, client_id, client_secret)
+                        services = _get_services(token, sqlite_path)
+                        ocr_result = services["storage"].get_ocr_result(job_id, file_ref.file_id)
+                        if ocr_result is None or not ocr_result.text.strip():
+                            st.error("Run OCR first to capture label examples.")
+                        else:
+                            labels_data = _upsert_label_example(
+                                labels_data, new_label.strip(), ocr_result.text
+                            )
+                            _save_labels_json(labels_data)
+                            label_names = [
+                                label.get("name")
+                                for label in labels_data
+                                if label.get("name")
+                            ]
+                            current_selections[file_ref.file_id] = new_label.strip()
+                            st.session_state[new_label_key] = ""
+                            st.success("Label created.")
+                    except Exception as exc:
+                        st.error(f"Create label failed: {exc}")
+
+            suggestions = _build_suggested_names(files, current_selections)
+            suggested_name = suggestions.get(file_ref.file_id, "")
+            effective_label = current_selections.get(file_ref.file_id)
             rename_key = f"edit_{file_ref.file_id}"
+            if effective_label and (
+                previous_label != effective_label or not st.session_state.get(rename_key)
+            ):
+                st.session_state[rename_key] = suggested_name
             new_name = st.text_input(
                 "Rename file",
                 value=st.session_state.get(rename_key, ""),
@@ -520,6 +732,14 @@ def main() -> None:
             )
             if new_name.strip():
                 edits[file_ref.file_id] = new_name
+
+            result = classification_results.get(file_ref.file_id)
+            if result:
+                score_pct = f"{result['score'] * 100:.1f}%"
+                status = result["status"]
+                label_name = result["label"] or ""
+                st.write(f"Classification: {label_name} | {score_pct} | {status}")
+
             if job_id and st.session_state.get("ocr_ready"):
                 with st.expander("View OCR"):
                     try:
@@ -541,6 +761,7 @@ def main() -> None:
                         )
                     except Exception as exc:
                         st.error(f"OCR lookup failed: {exc}")
+        st.session_state["label_selections"] = current_selections
     else:
         edits = {}
 

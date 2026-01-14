@@ -70,6 +70,7 @@ def test_process_examples_embeddings_fallback_to_tokens() -> None:
             created_at=None,
         )
     ]
+    storage.get_ocr_result.return_value = None
     drive = Mock()
     drive.download_file_bytes.return_value = b"img"
     ocr = Mock()
@@ -80,4 +81,39 @@ def test_process_examples_embeddings_fallback_to_tokens() -> None:
 
     service.process_examples(None)
 
+    storage.save_label_example_features.assert_called_once()
+
+
+def test_process_examples_reuses_job_ocr_text() -> None:
+    storage = Mock()
+    storage.list_labels.return_value = [
+        Label(
+            label_id="label-1",
+            name="Test",
+            is_active=True,
+            created_at=None,
+            extraction_schema_json="{}",
+            naming_template="",
+        )
+    ]
+    storage.list_label_examples.return_value = [
+        LabelExample(
+            example_id="ex-1",
+            label_id="label-1",
+            file_id="file-1",
+            filename="file-1",
+            created_at=None,
+        )
+    ]
+    storage.get_ocr_result.return_value = Mock(text="cached text")
+    drive = Mock()
+    ocr = Mock()
+    embeddings = Mock()
+    embeddings.embed_text.return_value = []
+    service = LabelService(drive=drive, ocr=ocr, embeddings=embeddings, storage=storage)
+
+    service.process_examples(None, job_id="job-1")
+
+    drive.download_file_bytes.assert_not_called()
+    ocr.extract_text.assert_not_called()
     storage.save_label_example_features.assert_called_once()
