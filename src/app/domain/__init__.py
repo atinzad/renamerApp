@@ -7,6 +7,7 @@ from .labels import (
     LabelMatch,
     decide_match,
 )
+from .doc_types import DocType, DocTypeClassification
 from .models import FileRef, Job, RenameOp, UndoLog
 from .rename_logic import build_manual_plan, resolve_collisions, sanitize_filename
 from .report_rendering import render_increment2_report
@@ -15,6 +16,8 @@ from .similarity import cosine_similarity, jaccard_similarity, normalize_text_to
 
 __all__ = [
     "AMBIGUOUS",
+    "DocType",
+    "DocTypeClassification",
     "FileRef",
     "Job",
     "Label",
