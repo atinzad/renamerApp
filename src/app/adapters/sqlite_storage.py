@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime
 from uuid import uuid4
 
+from app.domain.doc_types import DocType, DocTypeClassification, signals_from_json, signals_to_json
 from app.domain.labels import Label, LabelExample
 from app.domain.models import FileRef, Job, OCRResult, RenameOp, UndoLog
 from app.ports.storage_port import StoragePort
@@ -657,6 +658,138 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to export labels") from exc
 
+    def upsert_doc_type_classification(
+        self,
+        job_id: str,
+        file_id: str,
+        classification: DocTypeClassification,
+        updated_at_iso: str,
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO doc_type_classifications(
+                        job_id, file_id, doc_type, confidence, signals_json, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        doc_type = excluded.doc_type,
+                        confidence = excluded.confidence,
+                        signals_json = excluded.signals_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        job_id,
+                        file_id,
+                        classification.doc_type.value,
+                        classification.confidence,
+                        json.dumps(signals_to_json(classification.signals)),
+                        updated_at_iso,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to upsert doc type classification") from exc
+
+    def get_doc_type_classification(
+        self, job_id: str, file_id: str
+    ) -> DocTypeClassification | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT doc_type, confidence, signals_json
+                    FROM doc_type_classifications
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return DocTypeClassification(
+                doc_type=DocType(row[0]),
+                confidence=row[1],
+                signals=signals_from_json(row[2]),
+            )
+        except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Failed to fetch doc type classification") from exc
+
+    def list_doc_type_classifications(self, job_id: str) -> dict[str, DocTypeClassification]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_id, doc_type, confidence, signals_json
+                    FROM doc_type_classifications
+                    WHERE job_id = ?
+                    ORDER BY file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            results: dict[str, DocTypeClassification] = {}
+            for row in rows:
+                results[row[0]] = DocTypeClassification(
+                    doc_type=DocType(row[1]),
+                    confidence=row[2],
+                    signals=signals_from_json(row[3]),
+                )
+            return results
+        except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Failed to list doc type classifications") from exc
+
+    def set_doc_type_override(
+        self, job_id: str, file_id: str, doc_type: DocType, updated_at_iso: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO doc_type_overrides(job_id, file_id, doc_type, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        doc_type = excluded.doc_type,
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_id, file_id, doc_type.value, updated_at_iso),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to upsert doc type override") from exc
+
+    def get_doc_type_override(self, job_id: str, file_id: str) -> DocType | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT doc_type
+                    FROM doc_type_overrides
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return DocType(row[0])
+        except (sqlite3.Error, ValueError) as exc:
+            raise RuntimeError("Failed to fetch doc type override") from exc
+
+    def list_doc_type_overrides(self, job_id: str) -> dict[str, DocType]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_id, doc_type
+                    FROM doc_type_overrides
+                    WHERE job_id = ?
+                    ORDER BY file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            return {row[0]: DocType(row[1]) for row in rows}
+        except (sqlite3.Error, ValueError) as exc:
+            raise RuntimeError("Failed to list doc type overrides") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -766,6 +899,30 @@ class SQLiteStorage(StoragePort):
                         job_id TEXT,
                         file_id TEXT,
                         label_id TEXT,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS doc_type_classifications(
+                        job_id TEXT,
+                        file_id TEXT,
+                        doc_type TEXT,
+                        confidence REAL,
+                        signals_json TEXT,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS doc_type_overrides(
+                        job_id TEXT,
+                        file_id TEXT,
+                        doc_type TEXT,
                         updated_at TEXT,
                         PRIMARY KEY(job_id, file_id)
                     )
