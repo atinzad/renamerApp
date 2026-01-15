@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from app.domain.doc_types import DocType, DocTypeClassification
 from app.domain.labels import Label, LabelExample
 from app.domain.models import FileRef, Job, OCRResult, UndoLog
 
@@ -107,3 +108,33 @@ class StoragePort(Protocol):
 
     def export_labels_for_presets(self) -> list[dict]:
         """Return label preset data for export."""
+
+    def upsert_doc_type_classification(
+        self,
+        job_id: str,
+        file_id: str,
+        classification: DocTypeClassification,
+        updated_at_iso: str,
+    ) -> None:
+        """Persist a doc type classification for a job file."""
+
+    def get_doc_type_classification(
+        self, job_id: str, file_id: str
+    ) -> DocTypeClassification | None:
+        """Return a doc type classification for a job file."""
+
+    def list_doc_type_classifications(
+        self, job_id: str
+    ) -> dict[str, DocTypeClassification]:
+        """Return doc type classifications for a job keyed by file_id."""
+
+    def set_doc_type_override(
+        self, job_id: str, file_id: str, doc_type: DocType, updated_at_iso: str
+    ) -> None:
+        """Persist a doc type override for a job file."""
+
+    def get_doc_type_override(self, job_id: str, file_id: str) -> DocType | None:
+        """Return a doc type override for a job file."""
+
+    def list_doc_type_overrides(self, job_id: str) -> dict[str, DocType]:
+        """Return doc type overrides for a job keyed by file_id."""
