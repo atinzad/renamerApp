@@ -138,3 +138,38 @@ class StoragePort(Protocol):
 
     def list_doc_type_overrides(self, job_id: str) -> dict[str, DocType]:
         """Return doc type overrides for a job keyed by file_id."""
+
+    def upsert_llm_label_classification(
+        self,
+        job_id: str,
+        file_id: str,
+        label_name: str | None,
+        confidence: float,
+        signals: list[str],
+        updated_at_iso: str,
+    ) -> None:
+        """Persist an LLM label fallback classification for a job file."""
+
+    def get_llm_label_classification(
+        self, job_id: str, file_id: str
+    ) -> tuple[str | None, float, list[str]] | None:
+        """Return an LLM label fallback classification for a job file."""
+
+    def list_llm_label_classifications(
+        self, job_id: str
+    ) -> dict[str, tuple[str | None, float, list[str]]]:
+        """Return LLM label fallback classifications for a job keyed by file_id."""
+
+    def set_llm_label_override(
+        self, job_id: str, file_id: str, label_name: str, updated_at_iso: str
+    ) -> None:
+        """Persist an LLM label override for a job file."""
+
+    def clear_llm_label_override(self, job_id: str, file_id: str) -> None:
+        """Clear an LLM label override for a job file."""
+
+    def get_llm_label_override(self, job_id: str, file_id: str) -> str | None:
+        """Return an LLM label override for a job file."""
+
+    def list_llm_label_overrides(self, job_id: str) -> dict[str, str]:
+        """Return LLM label overrides for a job keyed by file_id."""

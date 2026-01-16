@@ -790,6 +790,151 @@ class SQLiteStorage(StoragePort):
         except (sqlite3.Error, ValueError) as exc:
             raise RuntimeError("Failed to list doc type overrides") from exc
 
+    def upsert_llm_label_classification(
+        self,
+        job_id: str,
+        file_id: str,
+        label_name: str | None,
+        confidence: float,
+        signals: list[str],
+        updated_at_iso: str,
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO llm_label_classifications(
+                        job_id, file_id, label_name, confidence, signals_json, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        label_name = excluded.label_name,
+                        confidence = excluded.confidence,
+                        signals_json = excluded.signals_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        job_id,
+                        file_id,
+                        label_name,
+                        confidence,
+                        json.dumps(signals_to_json(signals)),
+                        updated_at_iso,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to upsert LLM label classification") from exc
+
+    def get_llm_label_classification(
+        self, job_id: str, file_id: str
+    ) -> tuple[str | None, float, list[str]] | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT label_name, confidence, signals_json
+                    FROM llm_label_classifications
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return (
+                row[0],
+                row[1],
+                signals_from_json(row[2]),
+            )
+        except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Failed to fetch LLM label classification") from exc
+
+    def list_llm_label_classifications(
+        self, job_id: str
+    ) -> dict[str, tuple[str | None, float, list[str]]]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_id, label_name, confidence, signals_json
+                    FROM llm_label_classifications
+                    WHERE job_id = ?
+                    ORDER BY file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            results: dict[str, tuple[str | None, float, list[str]]] = {}
+            for row in rows:
+                results[row[0]] = (row[1], row[2], signals_from_json(row[3]))
+            return results
+        except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Failed to list LLM label classifications") from exc
+
+    def set_llm_label_override(
+        self, job_id: str, file_id: str, label_name: str, updated_at_iso: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO llm_label_overrides(job_id, file_id, label_name, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        label_name = excluded.label_name,
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_id, file_id, label_name, updated_at_iso),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to upsert LLM label override") from exc
+
+    def clear_llm_label_override(self, job_id: str, file_id: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM llm_label_overrides
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to clear LLM label override") from exc
+
+    def get_llm_label_override(self, job_id: str, file_id: str) -> str | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT label_name
+                    FROM llm_label_overrides
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return row[0]
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch LLM label override") from exc
+
+    def list_llm_label_overrides(self, job_id: str) -> dict[str, str]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_id, label_name
+                    FROM llm_label_overrides
+                    WHERE job_id = ?
+                    ORDER BY file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            return {row[0]: row[1] for row in rows}
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to list LLM label overrides") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -923,6 +1068,30 @@ class SQLiteStorage(StoragePort):
                         job_id TEXT,
                         file_id TEXT,
                         doc_type TEXT,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_label_classifications(
+                        job_id TEXT,
+                        file_id TEXT,
+                        label_name TEXT NULL,
+                        confidence REAL,
+                        signals_json TEXT,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm_label_overrides(
+                        job_id TEXT,
+                        file_id TEXT,
+                        label_name TEXT,
                         updated_at TEXT,
                         PRIMARY KEY(job_id, file_id)
                     )
