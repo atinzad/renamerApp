@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -21,7 +22,7 @@ if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
 from app.container import build_services
-from app.domain.label_fallback import normalize_labels_llm
+from app.domain.label_fallback import list_fallback_candidates, normalize_labels_llm
 from app.domain.labels import AMBIGUOUS, MATCHED, NO_MATCH, decide_match
 from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
 
@@ -91,6 +92,13 @@ def _load_labels_json() -> list[dict]:
     if isinstance(data, list):
         return normalize_labels_llm(data)
     return []
+
+
+def _trigger_rerun() -> None:
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
 
 
 def _save_labels_json(labels: list[dict]) -> None:
@@ -553,14 +561,15 @@ def main() -> None:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
 
-        report_cols = st.columns(4)
+        report_cols = st.columns(5)
         run_ocr_clicked = report_cols[0].button(
             "Run OCR",
             disabled=job_id is None,
         )
         classify_clicked = report_cols[1].button("Classify files")
-        preview_report_clicked = report_cols[2].button("Preview Report")
-        write_report_clicked = report_cols[3].button(
+        fallback_clicked = report_cols[2].button("Classify fallback labels (LLM)")
+        preview_report_clicked = report_cols[3].button("Preview Report")
+        write_report_clicked = report_cols[4].button(
             "Write Report to Folder",
             disabled=job_id is None,
         )
@@ -648,13 +657,40 @@ def main() -> None:
                     st.success("Classification completed.")
                 except Exception as exc:
                     st.error(f"Classification failed: {exc}")
+        if fallback_clicked:
+            if not st.session_state.get("ocr_ready"):
+                st.error("Run OCR first.")
+            else:
+                try:
+                    token = _ensure_access_token(access_token, client_id, client_secret)
+                    services = _get_services(token, sqlite_path)
+                    with st.spinner("Classifying fallback labels..."):
+                        services["llm_fallback_label_service"].classify_unlabeled_files(
+                            job_id
+                        )
+                    st.success("Fallback classification completed.")
+                    _trigger_rerun()
+                except Exception as exc:
+                    st.error(f"Fallback classification failed: {exc}")
 
     files = st.session_state.get("files", [])
     edits: dict[str, str] = {}
     label_selections = st.session_state.get("label_selections", {})
     labels_data = _load_labels_json()
     label_names = [label.get("name") for label in labels_data if label.get("name")]
+    fallback_candidates = list_fallback_candidates(labels_data)
+    fallback_candidate_names = [candidate.name for candidate in fallback_candidates]
     classification_results = st.session_state.get("classification_results", {})
+    llm_classifications: dict[str, tuple[str | None, float, list[str]]] = {}
+    llm_overrides: dict[str, str] = {}
+    if job_id:
+        try:
+            token = _ensure_access_token(access_token, client_id, client_secret)
+            services = _get_services(token, sqlite_path)
+            llm_classifications = services["storage"].list_llm_label_classifications(job_id)
+            llm_overrides = services["storage"].list_llm_label_overrides(job_id)
+        except Exception as exc:
+            st.error(f"LLM fallback lookup failed: {exc}")
     if files:
         st.subheader("Files")
         current_selections = dict(label_selections)
@@ -745,6 +781,62 @@ def main() -> None:
                 label_name = result["label"] or ""
                 st.write(f"Classification: {label_name} | {score_pct} | {status}")
 
+            llm_override = llm_overrides.get(file_ref.file_id)
+            if llm_override:
+                st.write(f"LLM Fallback Label: {llm_override} (OVERRIDDEN)")
+            else:
+                llm_result = llm_classifications.get(file_ref.file_id)
+                if llm_result is None:
+                    st.write("LLM Fallback Label: —")
+                else:
+                    llm_label, llm_confidence, llm_signals = llm_result
+                    if llm_label:
+                        llm_score_pct = f"{llm_confidence * 100:.1f}%"
+                        st.write(f"LLM Fallback Label: {llm_label} ({llm_score_pct})")
+                    else:
+                        st.write("LLM Fallback Label: Abstained")
+                    if llm_signals:
+                        with st.expander("LLM signals"):
+                            st.write(", ".join(llm_signals))
+
+            if fallback_candidate_names and job_id:
+                llm_override_key = f"llm_override_{file_ref.file_id}"
+                override_options = ["(no override)"] + fallback_candidate_names
+                current_override = llm_overrides.get(file_ref.file_id)
+                override_index = (
+                    override_options.index(current_override)
+                    if current_override in override_options
+                    else 0
+                )
+                override_choice = st.selectbox(
+                    "LLM fallback override",
+                    override_options,
+                    index=override_index,
+                    key=llm_override_key,
+                )
+                new_override = None if override_choice == "(no override)" else override_choice
+                if new_override != current_override:
+                    try:
+                        token = _ensure_access_token(access_token, client_id, client_secret)
+                        services = _get_services(token, sqlite_path)
+                        if new_override:
+                            updated_at = datetime.now(timezone.utc).isoformat()
+                            services["storage"].set_llm_label_override(
+                                job_id,
+                                file_ref.file_id,
+                                new_override,
+                                updated_at,
+                            )
+                            llm_overrides[file_ref.file_id] = new_override
+                        else:
+                            services["storage"].clear_llm_label_override(
+                                job_id, file_ref.file_id
+                            )
+                            llm_overrides.pop(file_ref.file_id, None)
+                        _trigger_rerun()
+                    except Exception as exc:
+                        st.error(f"LLM override update failed: {exc}")
+
             if job_id and st.session_state.get("ocr_ready"):
                 with st.expander("View OCR"):
                     try:
@@ -766,6 +858,7 @@ def main() -> None:
                         )
                     except Exception as exc:
                         st.error(f"OCR lookup failed: {exc}")
+            st.markdown("---")
         st.session_state["label_selections"] = current_selections
     else:
         edits = {}
