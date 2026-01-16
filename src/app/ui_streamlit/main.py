@@ -390,6 +390,9 @@ def main() -> None:
     env_client_id = env_values.get("OAUTH_CLIENT_ID", "")
     env_client_secret = env_values.get("OAUTH_CLIENT_SECRET", "")
     env_folder_id = env_values.get("FOLDER_ID", "")
+    env_access_token = env_values.get("GOOGLE_DRIVE_ACCESS_TOKEN", "")
+    if env_access_token and not st.session_state.get("manual_access_token"):
+        st.session_state["manual_access_token"] = env_access_token
 
     st.subheader("Google Login (Recommended)")
     client_id = st.text_input(
