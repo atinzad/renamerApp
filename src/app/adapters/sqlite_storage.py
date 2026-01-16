@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.domain.doc_types import DocType, DocTypeClassification, signals_from_json, signals_to_json
@@ -20,7 +20,7 @@ class SQLiteStorage(StoragePort):
         job = Job(
             job_id=str(uuid4()),
             folder_id=folder_id,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             status="CREATED",
         )
         try:
@@ -253,7 +253,7 @@ class SQLiteStorage(StoragePort):
             label_id=str(uuid4()),
             name=name,
             is_active=True,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             extraction_schema_json=extraction_schema_json,
             naming_template=naming_template,
         )
@@ -365,7 +365,7 @@ class SQLiteStorage(StoragePort):
             label_id=label_id,
             file_id=file_id,
             filename=filename,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         try:
             with self._connect() as conn:
@@ -419,7 +419,7 @@ class SQLiteStorage(StoragePort):
         token_fingerprint: set[str] | None,
     ) -> None:
         try:
-            updated_at = datetime.utcnow().isoformat()
+            updated_at = datetime.now(timezone.utc).isoformat()
             embedding_json = json.dumps(embedding) if embedding is not None else None
             token_json = (
                 json.dumps(sorted(token_fingerprint))
@@ -473,7 +473,7 @@ class SQLiteStorage(StoragePort):
         status: str,
     ) -> None:
         try:
-            updated_at = datetime.utcnow().isoformat()
+            updated_at = datetime.now(timezone.utc).isoformat()
             with self._connect() as conn:
                 conn.execute(
                     """
@@ -547,7 +547,7 @@ class SQLiteStorage(StoragePort):
         self, job_id: str, file_id: str, label_id: str | None
     ) -> None:
         try:
-            updated_at = datetime.utcnow().isoformat()
+            updated_at = datetime.now(timezone.utc).isoformat()
             with self._connect() as conn:
                 conn.execute(
                     """
@@ -624,7 +624,7 @@ class SQLiteStorage(StoragePort):
                             label.get("label_id", str(uuid4())),
                             label.get("name", ""),
                             1 if label.get("is_active", True) else 0,
-                            label.get("created_at", datetime.utcnow().isoformat()),
+                            label.get("created_at", datetime.now(timezone.utc).isoformat()),
                             label.get("extraction_schema_json", "{}"),
                             label.get("naming_template", ""),
                         )
