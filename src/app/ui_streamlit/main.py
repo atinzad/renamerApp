@@ -21,6 +21,7 @@ if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
 from app.container import build_services
+from app.domain.label_fallback import normalize_labels_llm
 from app.domain.labels import AMBIGUOUS, MATCHED, NO_MATCH, decide_match
 from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
 
@@ -87,7 +88,9 @@ def _load_labels_json() -> list[dict]:
         data = json.loads(path.read_text())
     except json.JSONDecodeError:
         return []
-    return data if isinstance(data, list) else []
+    if isinstance(data, list):
+        return normalize_labels_llm(data)
+    return []
 
 
 def _save_labels_json(labels: list[dict]) -> None:
@@ -109,7 +112,9 @@ def _upsert_label_example(labels: list[dict], label_name: str, ocr_text: str) ->
             updated = True
             break
     if not updated:
-        labels.append({"name": normalized, "examples": [ocr_text] if ocr_text else []})
+        labels.append(
+            {"name": normalized, "examples": [ocr_text] if ocr_text else [], "llm": ""}
+        )
     return labels
 
 

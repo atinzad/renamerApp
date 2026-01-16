@@ -1,10 +1,14 @@
-from app.domain.doc_types import DocType, DocTypeClassification
+from app.domain.label_fallback import LabelFallbackCandidate, LabelFallbackClassification
 from app.ports.llm_port import LLMPort
 
 
 class DummyLLM:
-    def classify_doc_type(self, ocr_text: str) -> DocTypeClassification:
-        return DocTypeClassification(doc_type=DocType.OTHER, confidence=0.0, signals=[])
+    def classify_label(
+        self, ocr_text: str, candidates: list[LabelFallbackCandidate]
+    ) -> LabelFallbackClassification:
+        return LabelFallbackClassification(
+            label_name=None, confidence=0.0, signals=["LLM_NOT_CONFIGURED"]
+        )
 
 
 def test_llm_port_runtime_checkable() -> None:

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
-
 from app.domain.label_fallback import LabelFallbackCandidate, LabelFallbackClassification
+from app.ports.llm_port import LLMPort
 
 
-@runtime_checkable
-class LLMPort(Protocol):
+class MockLLMAdapter(LLMPort):
     def classify_label(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
     ) -> LabelFallbackClassification:
-        """Classify a label name from OCR text."""
+        return LabelFallbackClassification(
+            label_name=None, confidence=0.0, signals=["LLM_NOT_CONFIGURED"]
+        )

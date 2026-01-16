@@ -1,0 +1,22 @@
+[
+  {
+    "name": "INVOICE",
+    "examples": [],
+    "llm": "Identify invoices, billing statements, or documents referencing totals, due dates, or invoice numbers."
+  },
+  {
+    "name": "CIVIL_ID",
+    "examples": [],
+    "llm": "Identify government-issued civil identification documents, IDs, or national identity cards."
+  },
+  {
+    "name": "CONTRACT",
+    "examples": [],
+    "llm": "Identify contracts, agreements, or documents with clauses, signatures, and effective dates."
+  },
+  {
+    "name": "MISC",
+    "examples": [],
+    "llm": ""
+  }
+]
