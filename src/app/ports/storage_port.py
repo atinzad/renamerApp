@@ -173,3 +173,30 @@ class StoragePort(Protocol):
 
     def list_llm_label_overrides(self, job_id: str) -> dict[str, str]:
         """Return LLM label overrides for a job keyed by file_id."""
+
+    def save_extraction(
+        self,
+        job_id: str,
+        file_id: str,
+        schema_json: str,
+        fields_json: str,
+        confidences_json: str,
+        updated_at: str,
+    ) -> None:
+        """Persist extraction output for a job file."""
+
+    def get_extraction(self, job_id: str, file_id: str) -> dict | None:
+        """Return extraction output for a job file."""
+
+    def get_file_label_override_id(self, job_id: str, file_id: str) -> str | None:
+        """Return the override label_id for a job file, if any."""
+
+    def get_file_label_assignment_summary(
+        self, job_id: str, file_id: str
+    ) -> tuple[str | None, float, str] | None:
+        """Return (label_id, score, status) for a job file."""
+
+    def update_label_extraction_schema(
+        self, label_id: str, extraction_schema_json: str
+    ) -> None:
+        """Update extraction schema JSON for a label."""
