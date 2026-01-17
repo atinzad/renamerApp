@@ -149,6 +149,28 @@ def _build_suggested_names(
     return suggestions
 
 
+def _render_preview_plan(
+    container: st.delta_generator.DeltaGenerator,
+    ops: list,
+    notice: str | None = None,
+) -> None:
+    with container:
+        if ops:
+            st.subheader("Preview Plan")
+            st.table(
+                [
+                    {
+                        "file_id": op.file_id,
+                        "old_name": op.old_name,
+                        "new_name": op.new_name,
+                    }
+                    for op in ops
+                ]
+            )
+        elif notice:
+            st.info(notice)
+
+
 def _classify_with_labels(labels: list[dict], ocr_text: str) -> tuple[str | None, float, str]:
     tokens = normalize_text_to_tokens(ocr_text)
     if not tokens or not labels:
@@ -557,12 +579,14 @@ def main() -> None:
             st.session_state["job_id"] = job.job_id
             st.session_state["files"] = files
             st.session_state["preview_ops"] = []
+            st.session_state["preview_notice"] = ""
             st.session_state["ocr_ready"] = False
             st.info(f"Listed {len(files)} files from Drive. Job ID: {job.job_id}")
         except Exception as exc:
             st.error(f"List files failed: {exc}")
 
     job_id = st.session_state.get("job_id")
+    preview_container = st.container()
     if job_id:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
@@ -884,41 +908,56 @@ def main() -> None:
 
                 if job_id:
                     with st.expander("Preview file", expanded=False):
-                        try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
-                            services = _get_services(token, sqlite_path)
-                            file_bytes = services["drive"].download_file_bytes(file_ref.file_id)
-                            if len(file_bytes) > _PREVIEW_MAX_BYTES:
-                                st.info("Preview skipped (file too large).")
-                            elif file_ref.mime_type.startswith("image/"):
-                                st.image(file_bytes, use_container_width=True)
-                            elif file_ref.mime_type == "application/pdf":
-                                rendered = False
-                                if hasattr(st, "pdf"):
-                                    try:
-                                        st.pdf(file_bytes)
-                                        rendered = True
-                                    except Exception:
-                                        rendered = False
-                                if not rendered:
-                                    encoded = base64.b64encode(file_bytes).decode("ascii")
-                                    html = (
-                                        f'<object data="data:application/pdf;base64,{encoded}" '
-                                        'type="application/pdf" width="100%" height="600">'
-                                        "PDF preview unavailable. Use download below."
-                                        "</object>"
-                                    )
-                                    components.html(html, height=620)
-                                st.download_button(
-                                    "Download PDF",
-                                    data=file_bytes,
-                                    file_name=file_ref.name,
-                                    mime="application/pdf",
+                        preview_key = f"preview_toggle_{file_ref.file_id}"
+                        load_preview = st.toggle(
+                            "Load preview",
+                            value=False,
+                            key=preview_key,
+                        )
+                        if load_preview:
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
                                 )
-                            else:
-                                st.info("Preview not available for this file type.")
-                        except Exception as exc:
-                            st.error(f"Preview failed: {exc}")
+                                services = _get_services(token, sqlite_path)
+                                file_bytes = services["drive"].download_file_bytes(
+                                    file_ref.file_id
+                                )
+                                if len(file_bytes) > _PREVIEW_MAX_BYTES:
+                                    st.info("Preview skipped (file too large).")
+                                elif file_ref.mime_type.startswith("image/"):
+                                    st.image(file_bytes, width="stretch")
+                                elif file_ref.mime_type == "application/pdf":
+                                    rendered = False
+                                    if hasattr(st, "pdf"):
+                                        try:
+                                            st.pdf(file_bytes)
+                                            rendered = True
+                                        except Exception:
+                                            rendered = False
+                                    if not rendered:
+                                        encoded = base64.b64encode(file_bytes).decode(
+                                            "ascii"
+                                        )
+                                        html = (
+                                            f'<object data="data:application/pdf;base64,{encoded}" '
+                                            'type="application/pdf" width="100%" height="600">'
+                                            "PDF preview unavailable. Use download below."
+                                            "</object>"
+                                        )
+                                        components.html(html, height=620)
+                                    st.download_button(
+                                        "Download PDF",
+                                        data=file_bytes,
+                                        file_name=file_ref.name,
+                                        mime="application/pdf",
+                                    )
+                                else:
+                                    st.info("Preview not available for this file type.")
+                            except Exception as exc:
+                                st.error(f"Preview failed: {exc}")
+                        else:
+                            st.caption("Preview loads on demand to keep the UI responsive.")
         st.session_state["label_selections"] = current_selections
     else:
         edits = {}
@@ -931,22 +970,16 @@ def main() -> None:
                 raise RuntimeError("No job has been created yet.")
             ops = services["rename_service"].preview_manual_rename(job_id, edits)
             st.session_state["preview_ops"] = ops
-            if ops:
-                st.subheader("Preview Plan")
-                st.table(
-                    [
-                        {
-                            "file_id": op.file_id,
-                            "old_name": op.old_name,
-                            "new_name": op.new_name,
-                        }
-                        for op in ops
-                    ]
-                )
-            else:
-                st.info("No rename operations to preview.")
+            st.session_state["preview_notice"] = (
+                "" if ops else "No rename operations to preview."
+            )
         except Exception as exc:
             st.error(f"Preview failed: {exc}")
+
+    preview_ops = st.session_state.get("preview_ops", [])
+    preview_notice = st.session_state.get("preview_notice", "")
+    if preview_ops or preview_notice:
+        _render_preview_plan(preview_container, preview_ops, preview_notice)
 
     if apply_clicked:
         try:
