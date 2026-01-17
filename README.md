@@ -2,7 +2,8 @@
 
 Rename files in a Google Drive folder with a Streamlit UI. Preview changes, apply
 renames, undo the last rename, run OCR (images + PDFs), classify files with local
-labels, and generate/upload a per-file report that includes OCR text when available.
+labels, generate/upload a per-file report, and optionally get LLM fallback label
+suggestions for unmatched files.
 
 ## Project Layout
 - `src/app/domain/` — dataclasses and pure rename logic
@@ -33,6 +34,11 @@ source .venv/bin/activate
 PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 ```
 
+Optional (LLM fallback):
+- Set `LLM_PROVIDER=openai`
+- Set `OPENAI_API_KEY=...`
+- Optionally set `OPENAI_MODEL` and `LLM_LABEL_MIN_CONFIDENCE`
+
 ## Authentication (OAuth)
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
 Recommended: use the built-in OAuth flow so you do not have to paste access tokens.
@@ -59,6 +65,10 @@ OAUTH_CLIENT_SECRET=...
 FOLDER_ID=...
 GOOGLE_DRIVE_ACCESS_TOKEN=...   # optional fallback
 SQLITE_PATH=./app.db            # optional override
+LLM_PROVIDER=openai             # optional (LLM fallback)
+OPENAI_API_KEY=...              # optional (LLM fallback)
+OPENAI_MODEL=...                # optional (LLM fallback)
+LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
 ```
 The `.env` file is ignored by git.
 
@@ -90,6 +100,7 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
    - Use **Create new label** to add a label (stores OCR example).
    - Or pick a label in **Classify** dropdown.
 7) Click **Classify files** to auto-assign labels using OCR text similarity.
+8) (Optional) Click **Classify fallback labels (LLM)** to suggest labels for NO_MATCH files.
 8) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
 9) Click **Preview** to see the rename plan.
 10) Click **Apply Rename** to rename files in Drive.
@@ -112,8 +123,13 @@ Run the Increment 4 label flow check (Drive + OCR + labels.json classification):
 ```bash
 env PYTHONPATH=src uv run python scripts/verify_increment4.py
 ```
+Run the Increment 5 LLM fallback check (Drive + OCR + LLM suggestion storage):
+```bash
+env PYTHONPATH=src uv run python scripts/verify_increment5.py
+```
 
 ## Notes
 - Labels are local and stored in `labels.json` (gitignored).
-- No LLMs or field extraction yet; classification uses OCR text similarity.
+- LLM fallback suggestions are optional and do not override labels.
+- Field extraction is not implemented yet; classification uses OCR text similarity.
 - The Drive adapter skips `text/plain` files when listing a folder.
