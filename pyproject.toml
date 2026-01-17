@@ -13,5 +13,5 @@ dependencies = [
     "pytesseract>=0.3.10",
     "pdf2image>=1.17.0",
     "requests>=2.31.0",
-    "streamlit>=1.30.0",
+    "streamlit[pdf]>=1.30.0",
 ]

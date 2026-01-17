@@ -893,12 +893,28 @@ def main() -> None:
                             elif file_ref.mime_type.startswith("image/"):
                                 st.image(file_bytes, use_container_width=True)
                             elif file_ref.mime_type == "application/pdf":
-                                encoded = base64.b64encode(file_bytes).decode("ascii")
-                                html = (
-                                    f'<iframe src="data:application/pdf;base64,{encoded}" '
-                                    'width="100%" height="600" style="border:none;"></iframe>'
+                                rendered = False
+                                if hasattr(st, "pdf"):
+                                    try:
+                                        st.pdf(file_bytes)
+                                        rendered = True
+                                    except Exception:
+                                        rendered = False
+                                if not rendered:
+                                    encoded = base64.b64encode(file_bytes).decode("ascii")
+                                    html = (
+                                        f'<object data="data:application/pdf;base64,{encoded}" '
+                                        'type="application/pdf" width="100%" height="600">'
+                                        "PDF preview unavailable. Use download below."
+                                        "</object>"
+                                    )
+                                    components.html(html, height=620)
+                                st.download_button(
+                                    "Download PDF",
+                                    data=file_bytes,
+                                    file_name=file_ref.name,
+                                    mime="application/pdf",
                                 )
-                                components.html(html, height=620)
                             else:
                                 st.info("Preview not available for this file type.")
                         except Exception as exc:
