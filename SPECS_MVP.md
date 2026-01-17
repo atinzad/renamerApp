@@ -136,8 +136,8 @@ repo/
 - Increment 3: OCR for job files (and later example files)
 - Increment 4: User-defined labels (“training”) + similarity-based classification
 - Increment 5: LLM label-name fallback (suggestion layer when no label match)
-- Increment 6: Field extraction + deterministic name proposals (preview)
-- Increment 7: Apply auto rename + report filled using consolidated fields + label inventory
+- Increment 6: Field extraction for reporting and decision support
+- Increment 7: Report filled using consolidated fields + label inventory (rename remains manual/label-based)
 
 ## 5. INCREMENT 1 SPEC — Manual Rename + Undo (Drive integration)
 ### 5.1 Scope (MUST implement)
@@ -500,13 +500,12 @@ Notes:
 - Results are stored and displayed
 - Label results remain authoritative if present
 
-## 10. INCREMENT 6 SPEC — Field Extraction + Deterministic Naming Proposals (Preview)
+## 10. INCREMENT 6 SPEC — Field Extraction (Reporting + Decision Support)
 ### 10.1 Scope (MUST implement)
 - Use a single Dynamic Extractor Agent hydrated at runtime
 - Extraction uses OCR text and a label-specific JSON schema to produce structured fields
-- Deterministic naming proposals generated from extracted fields
-- Preview table shows original -> proposed + warnings (missing fields, low confidence)
-- No automatic rename apply is required in this increment (apply happens Increment 7), but it may be included as a separate button if desired.
+- Extracted fields are stored and rendered into the report for downstream review/decision making
+- No filename proposal logic in this increment
 
 ### 10.2 Key design decision: extractor hydration priority
 For each file:
@@ -517,13 +516,9 @@ For each file:
 - Extraction field models are dynamic based on label-defined schema
   - Schema is a JSON object describing keys and types
   - Each extracted field may include confidence (0..1) or “unknown”
-- Naming templates:
-  - Deterministic template rules per label (naming_template)
-  - Templates are filled based on extracted keys; missing keys resolve to UNKNOWN
 - Missing field handling:
   - If required field missing -> include placeholder "UNKNOWN"
-  - Or mark as “needs review” and do not generate final name unless allowed by policy
-- Naming sanitization and collisions reuse Increment 1 logic
+  - Or mark as “needs review” in extracted fields
 
 ### 10.4 Port requirements
 - LLMPort MUST add a generic “extract_fields” method:
@@ -537,36 +532,26 @@ For each file:
   - Fetch label schema from storage and hydrate the extractor per file
   - Pass schema + OCR text to LLMPort for structured output
   - Store extraction results
-- NamingProposalService
-  - preview_naming(job_id) -> list[RenameOp] + warnings
-  - Build proposed filenames deterministically using label naming_template
-  - Resolve collisions against folder existing names
+  - No naming proposal service in this increment
 
 ### 10.6 Storage changes (SQLite)
 - Add tables:
-  - label_extractor_config(label_id TEXT PRIMARY KEY, naming_template TEXT, updated_at TEXT)
   - extractions(job_id TEXT, file_id TEXT, schema_json TEXT, fields_json TEXT, confidences_json TEXT, updated_at TEXT)
-  - naming_previews(job_id TEXT, file_id TEXT, proposed_name TEXT, warnings_json TEXT, updated_at TEXT) (optional cache)
 
 ### 10.7 UI requirements
 - Labels page:
-  - For each label: define extraction_schema (JSON) and naming_template
+  - For each label: define extraction_schema (JSON)
 - Job page:
   - Button: “Extract fields”
-  - Button: “Preview auto names”
-  - Table: original name, proposed name, warnings
   - For each file: show extracted fields (expandable)
 
 ### 10.8 Acceptance criteria
 - At least one extractor works end-to-end
-- Deterministic naming proposals are generated
+- Extracted fields are stored and visible in the report/UI
 - Warnings are produced for missing/uncertain fields
-- No rename is performed without explicit apply step (Increment 7)
 
-## 11. INCREMENT 7 SPEC — Apply Auto Rename + Report Filled via Consolidation
+## 11. INCREMENT 7 SPEC — Report Filled via Consolidation
 ### 11.1 Scope (MUST implement)
-- Apply the naming proposal (rename files in Drive)
-- Undo remains supported
 - Generate a final REPORT.txt that is populated from extracted fields
 - Report inventory includes counts per label and per doc type
 
@@ -580,9 +565,6 @@ For each file:
   - If no candidates -> “UNKNOWN"
 
 ### 11.3 Services requirements
-- RenameService.apply_rename reused:
-  - Must save undo log first
-  - Must rename in stable order
 - ConsolidationService
   - consolidate_report_fields(job_id) -> report_fields + notes
 - ReportService updated
@@ -597,14 +579,11 @@ For each file:
 
 ### 11.5 UI requirements
 - Job page:
-  - Button: “Apply auto rename”
   - Button: “Preview final report”
   - Button: “Write final report”
   - Show summary: number renamed, number skipped, number needs review
 
 ### 11.6 Acceptance criteria
-- Files renamed according to previewed plan
-- Undo restores originals
 - Report is filled with consolidated values, stable schema, and includes label inventory
 - Fresh deployment can auto-load agent presets from `presets.json`
 - Broken naming templates are rejected by schema validation before save
