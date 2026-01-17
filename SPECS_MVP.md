@@ -122,7 +122,7 @@ repo/
 #### 3.2.3 Ports added later
 - OCRPort (Increment 3)
 - EmbeddingsPort + label storage methods (Increment 4)
-- LLMPort (Increment 5)
+- LLMPort (Increment 5, label-name fallback)
 - DrivePort.upload_text_file (Increment 2)
 - DrivePort.download_file_bytes (Increment 3)
 
@@ -135,7 +135,7 @@ repo/
 - Increment 2: Per-file REPORT.txt generation (file list + extracted-content placeholders) + upload
 - Increment 3: OCR for job files (and later example files)
 - Increment 4: User-defined labels (“training”) + similarity-based classification
-- Increment 5: LLM doc-type classification (fallback when no label match)
+- Increment 5: LLM label-name fallback (suggestion layer when no label match)
 - Increment 6: Field extraction + deterministic name proposals (preview)
 - Increment 7: Apply auto rename + report filled using consolidated fields + label inventory
 
@@ -248,14 +248,14 @@ MUST implement:
   - Drive `file_id`
   - `mime_type`
   - `EXTRACTED_TEXT` placeholder (until Increment 3+)
-  - `EXTRACTED_FIELDS_JSON` placeholder (until Increment 5+)
+  - `EXTRACTED_FIELDS_JSON` placeholder (until Increment 6+)
 - User can preview report text in UI
 - User can write report to Drive folder
 
 ### 6.2 Non-goals (MUST NOT implement)
 - OCR or any extraction logic (Increment 3+)
 - Labeling / “training” / similarity classification (Increment 4+)
-- LLM-based doc type classification (Increment 5+)
+- LLM-based label fallback (Increment 5+)
 - Consolidation into top-level identity fields (Name, Civil ID, etc.) (Increment 7)
 
 ### 6.3 Report format (canonical + deterministic)
@@ -384,7 +384,7 @@ Notes:
 - Rename field auto-fills from label name with numbering + original extension
 
 ### 8.2 Non-goals (MUST NOT implement)
-- LLM doc-type classification (Increment 5)
+- LLM label fallback (Increment 5)
 - Automatic field extraction and naming (Increment 6+)
 
 ### 8.3 New domain models
@@ -460,38 +460,39 @@ Notes:
 ### 8.11 Deferred schema configuration
 - extraction_schema and naming_template collection is deferred to a later increment
 
-## 9. INCREMENT 5 SPEC — LLM Doc-Type Classification (Fallback for Unlabeled Files)
+## 9. INCREMENT 5 SPEC — LLM Label-Name Fallback (Suggestion Layer)
 ### 9.1 Scope (MUST implement)
 - For files with NO_MATCH (and not overridden):
-  - Use an LLM to assign a generic doc type: CIVIL_ID, CONTRACT, INVOICE, OTHER
-- Store doc type + confidence + signals
+  - Use an LLM to suggest a label name from the configured fallback candidates
+- Store label_name + confidence + signals
 - Keep label classification as first priority:
-  - If a file has a label MATCHED (or overridden), LLM doc-type classification is optional and may be skipped.
+  - If a file has a label MATCHED (or overridden), LLM fallback is optional and may be skipped.
 
 ### 9.2 New port: LLMPort
-- classify_doc_type(ocr_text: str) -> {doc_type: str, confidence: float, signals: list[str]}
+- classify_label(ocr_text: str, candidates: list[{name: str, instructions: str}]) -> {label_name: str | null, confidence: float, signals: list[str]}
 - (No extraction yet; extraction comes Increment 6)
 
 ### 9.3 Domain models
-- DocType enum
-- DocTypeClassification(doc_type, confidence, signals)
+- LabelFallbackCandidate(name, instructions)
+- LabelFallbackClassification(label_name, confidence, signals)
 
 ### 9.4 Services requirements
-- DocTypeClassificationService
+- LLMFallbackLabelService
   - classify_unlabeled_files(job_id) -> None
   - Determine unlabeled = no label assignment OR status=NO_MATCH and no override
   - Requires OCR text
-  - Store doc type classification
+  - Candidates = labels where `llm` is non-empty (after strip)
+  - Store LLM label classification (label_name or null) with confidence + signals
 
 ### 9.5 Storage changes (SQLite)
 - Add table:
-  - doc_type_classifications(job_id TEXT, file_id TEXT, doc_type TEXT, confidence REAL, signals_json TEXT, updated_at TEXT)
-  - doc_type_overrides(job_id TEXT, file_id TEXT, doc_type TEXT, updated_at TEXT) (optional)
+  - llm_label_classifications(job_id TEXT, file_id TEXT, label_name TEXT NULL, confidence REAL, signals_json TEXT, updated_at TEXT)
+  - llm_label_overrides(job_id TEXT, file_id TEXT, label_name TEXT, updated_at TEXT) (optional)
 
 ### 9.6 UI requirements
 - Job page:
-  - Button: “Classify doc types (fallback)”
-  - Column: Doc Type + confidence
+  - Button: “Classify fallback labels (LLM)”
+  - Column: LLM suggestion + confidence
   - Optional override selector
 
 ### 9.7 Acceptance criteria
@@ -510,8 +511,7 @@ Notes:
 ### 10.2 Key design decision: extractor hydration priority
 For each file:
 1) If file has an assigned label (or override), hydrate the extractor with that label’s schema
-2) Else if file has doc_type classification, use a doc-type default schema
-3) Else use a generic schema that produces minimal fields
+2) Else use a generic schema that produces minimal fields
 
 ### 10.3 Domain requirements
 - Extraction field models are dynamic based on label-defined schema
