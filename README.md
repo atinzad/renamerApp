@@ -39,6 +39,11 @@ Optional (LLM fallback):
 - Set `OPENAI_API_KEY=...`
 - Optionally set `OPENAI_MODEL` and `LLM_LABEL_MIN_CONFIDENCE`
 
+Increment 6 (Field Extraction):
+- Set `LLM_PROVIDER=openai`
+- Set `OPENAI_API_KEY=...`
+- Run OCR, then click **Extract fields** in the Job actions.
+
 ## Authentication (OAuth)
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
 Recommended: use the built-in OAuth flow so you do not have to paste access tokens.

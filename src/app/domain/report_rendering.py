@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import json
+
 _PENDING_TOKEN = "<<<PENDING_EXTRACTION>>>"
 
 
@@ -46,6 +48,8 @@ def render_increment2_report(
             if extracted_text is not None and str(extracted_text).strip()
             else _PENDING_TOKEN
         )
+        extracted_fields = _get_value(item, "extracted_fields", None)
+        extracted_fields_value = _render_fields_json(extracted_fields)
         lines.extend(
             [
                 "--- FILE START ---",
@@ -58,8 +62,18 @@ def render_increment2_report(
                 extracted_text_value,
                 "",
                 "EXTRACTED_FIELDS_JSON:",
-                _PENDING_TOKEN,
+                extracted_fields_value,
                 "--- FILE END ---",
             ]
         )
     return "\n".join(lines) + "\n"
+
+
+def _render_fields_json(value: Any) -> str:
+    if value is None:
+        return _PENDING_TOKEN
+    if isinstance(value, str):
+        return value if value.strip() else _PENDING_TOKEN
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True)
+    return _PENDING_TOKEN
