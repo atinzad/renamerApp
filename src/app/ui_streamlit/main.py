@@ -569,8 +569,11 @@ def main() -> None:
             "Run OCR",
             disabled=job_id is None,
         )
+        report_cols[0].caption("Required before classification.")
         classify_clicked = report_cols[1].button("Classify files")
+        report_cols[1].caption("Rule-based label match.")
         fallback_clicked = report_cols[2].button("Classify fallback labels (LLM)")
+        report_cols[2].caption("Suggests labels for NO_MATCH.")
         preview_report_clicked = report_cols[3].button("Preview Report")
         write_report_clicked = report_cols[4].button(
             "Write Report to Folder",
