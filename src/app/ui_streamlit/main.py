@@ -730,82 +730,71 @@ def main() -> None:
                     except Exception:
                         pass
 
-                new_label_key = f"new_label_{file_ref.file_id}"
-                new_label = st.text_input(
-                    "Create new label",
-                    value=st.session_state.get(new_label_key, ""),
-                    key=new_label_key,
-                )
-                if st.button("Create Label", key=f"create_label_{file_ref.file_id}"):
-                    if not new_label.strip():
-                        st.error("Label name is required.")
-                    elif not job_id:
-                        st.error("List files and run OCR before creating labels.")
-                    else:
-                        try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
-                            services = _get_services(token, sqlite_path)
-                            ocr_result = services["storage"].get_ocr_result(
-                                job_id, file_ref.file_id
-                            )
-                            if ocr_result is None or not ocr_result.text.strip():
-                                st.error("Run OCR first to capture label examples.")
-                            else:
-                                labels_data = _upsert_label_example(
-                                    labels_data, new_label.strip(), ocr_result.text
+                with st.expander("Create new label", expanded=False):
+                    new_label_key = f"new_label_{file_ref.file_id}"
+                    new_label = st.text_input(
+                        "Label name",
+                        value=st.session_state.get(new_label_key, ""),
+                        key=new_label_key,
+                    )
+                    if st.button("Create Label", key=f"create_label_{file_ref.file_id}"):
+                        if not new_label.strip():
+                            st.error("Label name is required.")
+                        elif not job_id:
+                            st.error("List files and run OCR before creating labels.")
+                        else:
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
                                 )
-                                _save_labels_json(labels_data)
-                                label_names = [
-                                    label.get("name")
-                                    for label in labels_data
-                                    if label.get("name")
-                                ]
-                                current_selections[file_ref.file_id] = new_label.strip()
-                                st.session_state[new_label_key] = ""
-                                st.success("Label created.")
-                        except Exception as exc:
-                            st.error(f"Create label failed: {exc}")
-
-                suggestions = _build_suggested_names(files, current_selections)
-                suggested_name = suggestions.get(file_ref.file_id, "")
-                effective_label = current_selections.get(file_ref.file_id)
-                rename_key = f"edit_{file_ref.file_id}"
-                if effective_label and (
-                    previous_label != effective_label or not st.session_state.get(rename_key)
-                ):
-                    st.session_state[rename_key] = suggested_name
-                new_name = st.text_input(
-                    "Rename file",
-                    value=st.session_state.get(rename_key, ""),
-                    key=rename_key,
-                )
-                if new_name.strip():
-                    edits[file_ref.file_id] = new_name
+                                services = _get_services(token, sqlite_path)
+                                ocr_result = services["storage"].get_ocr_result(
+                                    job_id, file_ref.file_id
+                                )
+                                if ocr_result is None or not ocr_result.text.strip():
+                                    st.error("Run OCR first to capture label examples.")
+                                else:
+                                    labels_data = _upsert_label_example(
+                                        labels_data, new_label.strip(), ocr_result.text
+                                    )
+                                    _save_labels_json(labels_data)
+                                    label_names = [
+                                        label.get("name")
+                                        for label in labels_data
+                                        if label.get("name")
+                                    ]
+                                    current_selections[file_ref.file_id] = new_label.strip()
+                                    st.session_state[new_label_key] = ""
+                                    st.success("Label created.")
+                            except Exception as exc:
+                                st.error(f"Create label failed: {exc}")
 
                 result = classification_results.get(file_ref.file_id)
                 if result:
                     score_pct = f"{result['score'] * 100:.1f}%"
                     status = result["status"]
                     label_name = result["label"] or ""
-                    st.write(f"Classification: {label_name} | {score_pct} | {status}")
+                    st.write(f"Rule-based classification: {label_name} ({score_pct})")
+                    st.caption(f"Status: {status}")
 
+                llm_signals: list[str] = []
                 llm_override = llm_overrides.get(file_ref.file_id)
                 if llm_override:
-                    st.write(f"LLM Fallback Label: {llm_override} (OVERRIDDEN)")
+                    st.write(f"LLM suggestion: {llm_override} (OVERRIDDEN)")
                 else:
                     llm_result = llm_classifications.get(file_ref.file_id)
                     if llm_result is None:
-                        st.write("LLM Fallback Label: —")
+                        st.write("LLM suggestion: —")
                     else:
                         llm_label, llm_confidence, llm_signals = llm_result
                         if llm_label:
                             llm_score_pct = f"{llm_confidence * 100:.1f}%"
-                            st.write(f"LLM Fallback Label: {llm_label} ({llm_score_pct})")
+                            st.write(f"LLM suggestion: {llm_label} ({llm_score_pct})")
                         else:
-                            st.write("LLM Fallback Label: Abstained")
-                        if llm_signals:
-                            with st.expander("LLM signals"):
-                                st.write(", ".join(llm_signals))
+                            st.write("LLM suggestion: Abstained")
+                if llm_signals:
+                    with st.expander("LLM signals", expanded=False):
+                        st.write(", ".join(llm_signals))
 
                 if fallback_candidate_names and job_id:
                     llm_override_key = f"llm_override_{file_ref.file_id}"
@@ -847,8 +836,24 @@ def main() -> None:
                         except Exception as exc:
                             st.error(f"LLM override update failed: {exc}")
 
+                suggestions = _build_suggested_names(files, current_selections)
+                suggested_name = suggestions.get(file_ref.file_id, "")
+                effective_label = current_selections.get(file_ref.file_id)
+                rename_key = f"edit_{file_ref.file_id}"
+                if effective_label and (
+                    previous_label != effective_label or not st.session_state.get(rename_key)
+                ):
+                    st.session_state[rename_key] = suggested_name
+                new_name = st.text_input(
+                    "Rename file",
+                    value=st.session_state.get(rename_key, ""),
+                    key=rename_key,
+                )
+                if new_name.strip():
+                    edits[file_ref.file_id] = new_name
+
                 if job_id and st.session_state.get("ocr_ready"):
-                    with st.expander("View OCR"):
+                    with st.expander("View OCR", expanded=False):
                         try:
                             token = _ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
