@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import http.server
 import json
 import socketserver
@@ -15,6 +16,7 @@ from uuid import uuid4
 import keyring
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 _SRC_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _SRC_ROOT.parent
@@ -39,6 +41,7 @@ _OAUTH_ERROR: str | None = None
 _OAUTH_EVENT = threading.Event()
 _OAUTH_SERVER_STARTED = False
 _OAUTH_RESULT_FILE = Path(tempfile.gettempdir()) / "renamerapp_oauth_result.json"
+_PREVIEW_MAX_BYTES = 10 * 1024 * 1024
 
 
 def _init_state() -> None:
@@ -878,6 +881,28 @@ def main() -> None:
                             )
                         except Exception as exc:
                             st.error(f"OCR lookup failed: {exc}")
+
+                if job_id:
+                    with st.expander("Preview file", expanded=False):
+                        try:
+                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            services = _get_services(token, sqlite_path)
+                            file_bytes = services["drive"].download_file_bytes(file_ref.file_id)
+                            if len(file_bytes) > _PREVIEW_MAX_BYTES:
+                                st.info("Preview skipped (file too large).")
+                            elif file_ref.mime_type.startswith("image/"):
+                                st.image(file_bytes, use_container_width=True)
+                            elif file_ref.mime_type == "application/pdf":
+                                encoded = base64.b64encode(file_bytes).decode("ascii")
+                                html = (
+                                    f'<iframe src="data:application/pdf;base64,{encoded}" '
+                                    'width="100%" height="600" style="border:none;"></iframe>'
+                                )
+                                components.html(html, height=620)
+                            else:
+                                st.info("Preview not available for this file type.")
+                        except Exception as exc:
+                            st.error(f"Preview failed: {exc}")
         st.session_state["label_selections"] = current_selections
     else:
         edits = {}
