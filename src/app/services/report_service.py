@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.domain.report_rendering import render_increment2_report
 from app.ports.drive_port import DrivePort
 from app.ports.storage_port import StoragePort
@@ -21,6 +23,7 @@ class ReportService:
                 "mime_type": file_ref.mime_type,
                 "sort_index": file_ref.sort_index if file_ref.sort_index is not None else index,
                 "extracted_text": self._get_extracted_text(job_id, file_ref.file_id),
+                "extracted_fields": self._get_extracted_fields(job_id, file_ref.file_id),
             }
             for index, file_ref in enumerate(job_files)
         ]
@@ -50,6 +53,18 @@ class ReportService:
         if result is None or not result.text.strip():
             return ""
         return result.text
+
+    def _get_extracted_fields(self, job_id: str, file_id: str) -> dict | None:
+        extraction = self._storage.get_extraction(job_id, file_id)
+        if extraction is None:
+            return None
+        fields_json = extraction.get("fields_json")
+        if not fields_json:
+            return None
+        try:
+            return json.loads(fields_json)
+        except json.JSONDecodeError:
+            return None
 
     @staticmethod
     def _report_filename(created_at) -> str:

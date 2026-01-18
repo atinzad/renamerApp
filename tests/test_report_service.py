@@ -27,6 +27,9 @@ class FakeStorage:
             return None
         return self.ocr_results.get(file_id)
 
+    def get_extraction(self, job_id: str, file_id: str) -> dict | None:
+        return None
+
 
 def test_preview_and_write_report() -> None:
     job = Job(

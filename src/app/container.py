@@ -20,6 +20,7 @@ from app.services.jobs_service import JobsService
 from app.services.label_classification_service import LabelClassificationService
 from app.services.label_service import LabelService
 from app.services.llm_fallback_label_service import LLMFallbackLabelService
+from app.services.extraction_service import ExtractionService
 from app.services.ocr_service import OCRService
 from app.services.presets_service import PresetsService
 from app.services.report_service import ReportService
@@ -48,6 +49,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
         "label_classification_service": LabelClassificationService(embeddings, storage),
         "label_service": LabelService(drive, ocr, embeddings, storage),
         "llm_fallback_label_service": LLMFallbackLabelService(storage, llm),
+        "extraction_service": ExtractionService(llm, storage),
         "ocr_service": OCRService(drive, ocr, storage),
         "presets_service": presets_service,
         "rename_service": RenameService(drive, storage),
