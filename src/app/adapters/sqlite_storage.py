@@ -935,6 +935,91 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to list LLM label overrides") from exc
 
+    def save_extraction(
+        self,
+        job_id: str,
+        file_id: str,
+        schema_json: str,
+        fields_json: str,
+        confidences_json: str,
+        updated_at: str,
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO extractions(
+                        job_id, file_id, schema_json, fields_json, confidences_json, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        schema_json = excluded.schema_json,
+                        fields_json = excluded.fields_json,
+                        confidences_json = excluded.confidences_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_id, file_id, schema_json, fields_json, confidences_json, updated_at),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to save extraction") from exc
+
+    def get_extraction(self, job_id: str, file_id: str) -> dict | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT schema_json, fields_json, confidences_json, updated_at
+                    FROM extractions
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return {
+                "schema_json": row[0],
+                "fields_json": row[1],
+                "confidences_json": row[2],
+                "updated_at": row[3],
+            }
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch extraction") from exc
+
+    def get_file_label_override_id(self, job_id: str, file_id: str) -> str | None:
+        override = self.get_file_label_override(job_id, file_id)
+        if override is None:
+            return None
+        return override.get("label_id")
+
+    def get_file_label_assignment_summary(
+        self, job_id: str, file_id: str
+    ) -> tuple[str | None, float, str] | None:
+        assignment = self.get_file_label_assignment(job_id, file_id)
+        if assignment is None:
+            return None
+        return (
+            assignment.get("label_id"),
+            float(assignment.get("score", 0.0)),
+            str(assignment.get("status", "")),
+        )
+
+    def update_label_extraction_schema(
+        self, label_id: str, extraction_schema_json: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE labels
+                    SET extraction_schema_json = ?
+                    WHERE label_id = ?
+                    """,
+                    (extraction_schema_json, label_id),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to update label extraction schema") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -1095,6 +1180,25 @@ class SQLiteStorage(StoragePort):
                         updated_at TEXT,
                         PRIMARY KEY(job_id, file_id)
                     )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS extractions(
+                        job_id TEXT,
+                        file_id TEXT,
+                        schema_json TEXT,
+                        fields_json TEXT,
+                        confidences_json TEXT,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_extractions_job_id
+                    ON extractions(job_id)
                     """
                 )
                 conn.execute(

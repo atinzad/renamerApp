@@ -10,6 +10,9 @@ class DummyLLM:
             label_name=None, confidence=0.0, signals=["LLM_NOT_CONFIGURED"]
         )
 
+    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+        return {}
+
 
 def test_llm_port_runtime_checkable() -> None:
     dummy = DummyLLM()
