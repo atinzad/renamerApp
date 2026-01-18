@@ -270,6 +270,54 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                         st.success("Schema saved.")
                     except Exception as exc:
                         st.error(f"Save failed: {exc}")
+            with st.expander("Examples", expanded=False):
+                try:
+                    examples = services["storage"].list_label_examples(label.label_id)
+                except Exception as exc:
+                    st.error(f"Failed to load examples: {exc}")
+                    examples = []
+                if not examples:
+                    st.info("No examples for this label yet.")
+                else:
+                    for example in examples:
+                        features = services["storage"].get_label_example_features(
+                            example.example_id
+                        )
+                        example_key = f"example_{example.example_id}"
+                        st.caption(f"{example.filename} ({example.file_id})")
+                        st.text_area(
+                            "Example OCR text",
+                            value=features.get("ocr_text", "") if features else "",
+                            key=example_key,
+                            height=140,
+                        )
+                    if st.button(
+                        "Save examples",
+                        key=f"save_examples_{label.label_id}",
+                    ):
+                        for example in examples:
+                            example_key = f"example_{example.example_id}"
+                            updated_text = st.session_state.get(example_key, "")
+                            try:
+                                tokens = normalize_text_to_tokens(updated_text or "")
+                                embedding = None
+                                try:
+                                    embedding = services["embeddings"].embed_text(
+                                        updated_text or ""
+                                    )
+                                except Exception:
+                                    embedding = None
+                                services["storage"].save_label_example_features(
+                                    example.example_id,
+                                    updated_text or "",
+                                    embedding,
+                                    tokens,
+                                )
+                            except Exception as exc:
+                                st.error(f"Failed to save example: {exc}")
+                                break
+                        else:
+                            st.success("Examples saved.")
 
 
 def _get_services(access_token: str, sqlite_path: str):
