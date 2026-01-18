@@ -256,15 +256,16 @@ class SQLiteStorage(StoragePort):
             created_at=datetime.now(timezone.utc),
             extraction_schema_json=extraction_schema_json,
             naming_template=naming_template,
+            llm="",
         )
         try:
             with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO labels(
-                        label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                        label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         label.label_id,
@@ -273,6 +274,7 @@ class SQLiteStorage(StoragePort):
                         label.created_at.isoformat(),
                         label.extraction_schema_json,
                         label.naming_template,
+                        label.llm,
                     ),
                 )
             return label
@@ -299,7 +301,7 @@ class SQLiteStorage(StoragePort):
                 if include_inactive:
                     rows = conn.execute(
                         """
-                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                         FROM labels
                         ORDER BY created_at ASC, label_id ASC
                         """
@@ -307,7 +309,7 @@ class SQLiteStorage(StoragePort):
                 else:
                     rows = conn.execute(
                         """
-                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                         FROM labels
                         WHERE is_active = 1
                         ORDER BY created_at ASC, label_id ASC
@@ -321,6 +323,7 @@ class SQLiteStorage(StoragePort):
                     created_at=datetime.fromisoformat(row[3]),
                     extraction_schema_json=row[4],
                     naming_template=row[5],
+                    llm=row[6] if row[6] is not None else "",
                 )
                 for row in rows
             ]
@@ -332,7 +335,7 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                     FROM labels
                     WHERE label_id = ?
                     """,
@@ -347,6 +350,7 @@ class SQLiteStorage(StoragePort):
                 created_at=datetime.fromisoformat(row[3]),
                 extraction_schema_json=row[4],
                 naming_template=row[5],
+                llm=row[6] if row[6] is not None else "",
             )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch label") from exc
@@ -615,9 +619,9 @@ class SQLiteStorage(StoragePort):
                 conn.executemany(
                     """
                     INSERT INTO labels(
-                        label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                        label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -627,6 +631,7 @@ class SQLiteStorage(StoragePort):
                             label.get("created_at", datetime.now(timezone.utc).isoformat()),
                             label.get("extraction_schema_json", "{}"),
                             label.get("naming_template", ""),
+                            label.get("llm", ""),
                         )
                         for label in labels
                     ],
@@ -639,7 +644,7 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template
+                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
                     FROM labels
                     ORDER BY created_at ASC, label_id ASC
                     """
@@ -652,6 +657,7 @@ class SQLiteStorage(StoragePort):
                     "created_at": row[3],
                     "extraction_schema_json": row[4],
                     "naming_template": row[5],
+                    "llm": row[6],
                 }
                 for row in rows
             ]
@@ -1084,7 +1090,8 @@ class SQLiteStorage(StoragePort):
                         is_active INTEGER,
                         created_at TEXT,
                         extraction_schema_json TEXT,
-                        naming_template TEXT
+                        naming_template TEXT,
+                        llm TEXT
                     )
                     """
                 )
@@ -1224,6 +1231,11 @@ class SQLiteStorage(StoragePort):
                 }
                 if "report_file_id" not in columns:
                     conn.execute("ALTER TABLE jobs ADD COLUMN report_file_id TEXT")
+                label_columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(labels)").fetchall()
+                }
+                if "llm" not in label_columns:
+                    conn.execute("ALTER TABLE labels ADD COLUMN llm TEXT")
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to initialize storage schema") from exc
 

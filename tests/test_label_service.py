@@ -15,6 +15,7 @@ def test_create_label_validates_schema() -> None:
         created_at=None,
         extraction_schema_json="{}",
         naming_template="",
+        llm="",
     )
     service = LabelService(drive=Mock(), ocr=Mock(), embeddings=Mock(), storage=storage)
 
@@ -59,6 +60,7 @@ def test_process_examples_embeddings_fallback_to_tokens() -> None:
             created_at=None,
             extraction_schema_json="{}",
             naming_template="",
+            llm="",
         )
     ]
     storage.list_label_examples.return_value = [
@@ -94,6 +96,7 @@ def test_process_examples_reuses_job_ocr_text() -> None:
             created_at=None,
             extraction_schema_json="{}",
             naming_template="",
+            llm="",
         )
     ]
     storage.list_label_examples.return_value = [

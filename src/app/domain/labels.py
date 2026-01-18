@@ -16,6 +16,7 @@ class Label:
     created_at: datetime
     extraction_schema_json: str
     naming_template: str
+    llm: str
 
 
 @dataclass
