@@ -3,6 +3,7 @@ AGENTS.md
 .env
 HANDOFF.md
 labels.json
+app.db
 
 # OS/editor
 .DS_Store
