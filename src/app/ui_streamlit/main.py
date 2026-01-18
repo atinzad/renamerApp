@@ -80,53 +80,11 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def _labels_path() -> Path:
-    return _REPO_ROOT / "labels.json"
-
-
-def _load_labels_json() -> list[dict]:
-    path = _labels_path()
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-    except json.JSONDecodeError:
-        return []
-    if isinstance(data, list):
-        return normalize_labels_llm(data)
-    return []
-
-
 def _trigger_rerun() -> None:
     if hasattr(st, "rerun"):
         st.rerun()
     else:
         st.experimental_rerun()
-
-
-def _save_labels_json(labels: list[dict]) -> None:
-    path = _labels_path()
-    path.write_text(json.dumps(labels, indent=2, sort_keys=True))
-
-
-def _upsert_label_example(labels: list[dict], label_name: str, ocr_text: str) -> list[dict]:
-    normalized = label_name.strip()
-    if not normalized:
-        return labels
-    updated = False
-    for label in labels:
-        if label.get("name") == normalized:
-            examples = label.get("examples", [])
-            if ocr_text and ocr_text not in examples:
-                examples.append(ocr_text)
-            label["examples"] = examples
-            updated = True
-            break
-    if not updated:
-        labels.append(
-            {"name": normalized, "examples": [ocr_text] if ocr_text else [], "llm": ""}
-        )
-    return labels
 
 
 def _build_suggested_names(
@@ -196,6 +154,44 @@ def _classify_with_labels(labels: list[dict], ocr_text: str) -> tuple[str | None
     second_score = label_scores[1][1] if len(label_scores) > 1 else None
     status, _ = decide_match(best_label, best_score, second_score, 0.35, 0.02)
     return best_label, best_score, status
+
+
+def _load_labels_from_storage(storage) -> tuple[list[dict], dict[str, str], bool]:
+    labels = storage.list_labels(include_inactive=False)
+    if not labels:
+        fallback = _load_labels_json_readonly()
+        return fallback, {}, True
+    label_map = {label.name: label.label_id for label in labels}
+    label_examples: dict[str, list[str]] = {label.label_id: [] for label in labels}
+    for label in labels:
+        examples = storage.list_label_examples(label.label_id)
+        for example in examples:
+            features = storage.get_label_example_features(example.example_id)
+            if features and features.get("ocr_text"):
+                label_examples[label.label_id].append(features["ocr_text"])
+    labels_data = [
+        {
+            "label_id": label.label_id,
+            "name": label.name,
+            "llm": label.llm,
+            "examples": label_examples.get(label.label_id, []),
+        }
+        for label in labels
+    ]
+    return labels_data, label_map, False
+
+
+def _load_labels_json_readonly() -> list[dict]:
+    path = _REPO_ROOT / "labels.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return normalize_labels_llm(data)
+    return []
 
 
 def _get_services(access_token: str, sqlite_path: str):
@@ -650,7 +646,10 @@ def main() -> None:
                     token = _ensure_access_token(access_token, client_id, client_secret)
                     services = _get_services(token, sqlite_path)
                     results: dict[str, dict] = {}
-                    labels_data = _load_labels_json()
+                    try:
+                        labels_data, _, _ = _load_labels_from_storage(services["storage"])
+                    except Exception:
+                        labels_data = _load_labels_json_readonly()
                     for file_ref in st.session_state.get("files", []):
                         ocr_result = services["storage"].get_ocr_result(
                             job_id, file_ref.file_id
@@ -709,7 +708,19 @@ def main() -> None:
     files = st.session_state.get("files", [])
     edits: dict[str, str] = {}
     label_selections = st.session_state.get("label_selections", {})
-    labels_data = _load_labels_json()
+    labels_data: list[dict] = []
+    label_id_map: dict[str, str] = {}
+    using_json_fallback = False
+    if job_id:
+        try:
+            token = _ensure_access_token(access_token, client_id, client_secret)
+            services = _get_services(token, sqlite_path)
+            labels_data, label_id_map, using_json_fallback = _load_labels_from_storage(
+                services["storage"]
+            )
+        except Exception:
+            labels_data = _load_labels_json_readonly()
+            using_json_fallback = True
     label_names = [label.get("name") for label in labels_data if label.get("name")]
     fallback_candidates = list_fallback_candidates(labels_data)
     fallback_candidate_names = [candidate.name for candidate in fallback_candidates]
@@ -726,6 +737,8 @@ def main() -> None:
             st.error(f"LLM fallback lookup failed: {exc}")
     if files:
         st.subheader("Files")
+        if using_json_fallback and labels_data:
+            st.info("Labels loaded from labels.json. Run the migration to use SQLite.")
         current_selections = dict(label_selections)
         for file_ref in files:
             with st.expander(f"**{file_ref.name}**", expanded=True):
@@ -749,14 +762,18 @@ def main() -> None:
                     try:
                         token = _ensure_access_token(access_token, client_id, client_secret)
                         services = _get_services(token, sqlite_path)
-                        ocr_result = services["storage"].get_ocr_result(
-                            job_id, file_ref.file_id
-                        )
-                        if ocr_result and ocr_result.text.strip():
-                            labels_data = _upsert_label_example(
-                                labels_data, selected_label, ocr_result.text
-                            )
-                            _save_labels_json(labels_data)
+                        label_id = label_id_map.get(selected_label)
+                        if label_id:
+                            examples = services["storage"].list_label_examples(label_id)
+                            if not any(
+                                example.file_id == file_ref.file_id for example in examples
+                            ):
+                                services["label_service"].attach_example(
+                                    label_id, file_ref.file_id
+                                )
+                                services["label_service"].process_examples(
+                                    label_id, job_id=job_id
+                                )
                     except Exception:
                         pass
 
@@ -784,10 +801,18 @@ def main() -> None:
                                 if ocr_result is None or not ocr_result.text.strip():
                                     st.error("Run OCR first to capture label examples.")
                                 else:
-                                    labels_data = _upsert_label_example(
-                                        labels_data, new_label.strip(), ocr_result.text
+                                    label = services["label_service"].create_label(
+                                        new_label.strip(), "{}", ""
                                     )
-                                    _save_labels_json(labels_data)
+                                    services["label_service"].attach_example(
+                                        label.label_id, file_ref.file_id
+                                    )
+                                    services["label_service"].process_examples(
+                                        label.label_id, job_id=job_id
+                                    )
+                                    labels_data, label_id_map, using_json_fallback = (
+                                        _load_labels_from_storage(services["storage"])
+                                    )
                                     label_names = [
                                         label.get("name")
                                         for label in labels_data
