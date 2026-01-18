@@ -194,6 +194,84 @@ def _load_labels_json_readonly() -> list[dict]:
     return []
 
 
+def _parse_extraction_payload(extraction: dict | None) -> dict[str, object]:
+    if not extraction:
+        return {
+            "fields": {},
+            "confidences": {},
+            "warnings": [],
+            "needs_review": False,
+        }
+    fields_payload: dict[str, object] = {}
+    confidences_payload: dict[str, object] = {}
+    warnings: list[str] = []
+    needs_review = False
+    fields_json = extraction.get("fields_json") or ""
+    if fields_json:
+        try:
+            parsed = json.loads(fields_json)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            raw_fields = parsed.get("fields", parsed)
+            if isinstance(raw_fields, dict):
+                fields_payload = raw_fields
+            warnings_value = parsed.get("warnings", [])
+            if isinstance(warnings_value, list):
+                warnings = [str(item) for item in warnings_value]
+            needs_review = bool(parsed.get("needs_review", False))
+    confidences_json = extraction.get("confidences_json") or ""
+    if confidences_json:
+        try:
+            parsed_confidences = json.loads(confidences_json)
+        except json.JSONDecodeError:
+            parsed_confidences = {}
+        if isinstance(parsed_confidences, dict):
+            confidences_payload = parsed_confidences
+    return {
+        "fields": fields_payload,
+        "confidences": confidences_payload,
+        "warnings": warnings,
+        "needs_review": needs_review,
+    }
+
+
+def _render_labels_view(access_token: str, sqlite_path: str) -> None:
+    st.subheader("Labels")
+    try:
+        services = _get_services(access_token, sqlite_path)
+        labels = services["storage"].list_labels(include_inactive=True)
+    except Exception as exc:
+        st.error(f"Failed to load labels: {exc}")
+        return
+    if not labels:
+        st.info("No labels found in SQLite.")
+        return
+    for label in labels:
+        status = "Active" if label.is_active else "Inactive"
+        with st.expander(f"{label.name} ({status})", expanded=False):
+            schema_key = f"schema_{label.label_id}"
+            schema_value = st.text_area(
+                "Extraction schema (JSON)",
+                value=label.extraction_schema_json or "{}",
+                key=schema_key,
+                height=200,
+            )
+            if st.button("Save schema", key=f"save_schema_{label.label_id}"):
+                try:
+                    json.loads(schema_value or "{}")
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}")
+                else:
+                    try:
+                        services["storage"].update_label_extraction_schema(
+                            label.label_id, schema_value.strip()
+                        )
+                        st.success("Schema saved.")
+                    except Exception as exc:
+                        st.error(f"Save failed: {exc}")
+
+
 def _get_services(access_token: str, sqlite_path: str):
     if (
         st.session_state["services"] is None
@@ -405,6 +483,8 @@ def main() -> None:
     if st.session_state.get("oauth_state"):
         _OAUTH_STATE = st.session_state.get("oauth_state")
 
+    view = st.sidebar.radio("View", ["Job", "Labels"], index=0)
+
     env_values = _load_env_file(_REPO_ROOT / ".env")
     stored_client_id = _get_keyring_value(_KEYRING_CLIENT_ID) or ""
     stored_client_secret = _get_keyring_value(_KEYRING_CLIENT_SECRET) or ""
@@ -557,6 +637,10 @@ def main() -> None:
     )
     sqlite_path = st.text_input("SQLite Path", value="./app.db")
 
+    if view == "Labels":
+        _render_labels_view(access_token or "", sqlite_path)
+        return
+
     cols = st.columns(4)
     list_clicked = cols[0].button("List Files")
     preview_clicked = cols[1].button("Preview")
@@ -587,7 +671,7 @@ def main() -> None:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
 
-        report_cols = st.columns(5)
+        report_cols = st.columns(6)
         run_ocr_clicked = report_cols[0].button(
             "Run OCR",
             disabled=job_id is None,
@@ -597,8 +681,10 @@ def main() -> None:
         report_cols[1].caption("Rule-based label match.")
         fallback_clicked = report_cols[2].button("Classify fallback labels (LLM)")
         report_cols[2].caption("Suggests labels for NO_MATCH.")
-        preview_report_clicked = report_cols[3].button("Preview Report")
-        write_report_clicked = report_cols[4].button(
+        extract_clicked = report_cols[3].button("Extract fields")
+        report_cols[3].caption("LLM-powered field extraction.")
+        preview_report_clicked = report_cols[4].button("Preview Report")
+        write_report_clicked = report_cols[5].button(
             "Write Report to Folder",
             disabled=job_id is None,
         )
@@ -623,6 +709,17 @@ def main() -> None:
                 st.success("Report preview generated.")
             except Exception as exc:
                 st.error(f"Report preview failed: {exc}")
+
+        if extract_clicked:
+            try:
+                token = _ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                with st.spinner("Extracting fields..."):
+                    services["extraction_service"].extract_fields_for_job(job_id)
+                st.success("Extraction completed.")
+                _trigger_rerun()
+            except Exception as exc:
+                st.error(f"Extraction failed: {exc}")
 
         st.text_area(
             "Report Preview",
@@ -890,6 +987,45 @@ def main() -> None:
                             _trigger_rerun()
                         except Exception as exc:
                             st.error(f"LLM override update failed: {exc}")
+
+                if job_id:
+                    with st.expander("Extracted fields", expanded=False):
+                        try:
+                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            services = _get_services(token, sqlite_path)
+                            extraction = services["storage"].get_extraction(
+                                job_id, file_ref.file_id
+                            )
+                        except Exception as exc:
+                            st.error(f"Extraction lookup failed: {exc}")
+                            extraction = None
+                        if not extraction:
+                            st.info("<<<PENDING_EXTRACTION>>>")
+                        else:
+                            parsed = _parse_extraction_payload(extraction)
+                            fields = parsed.get("fields", {})
+                            if fields:
+                                rows = [
+                                    {"Field": key, "Value": fields[key]}
+                                    for key in sorted(fields.keys())
+                                ]
+                                st.table(rows)
+                            else:
+                                st.info("No fields extracted.")
+                            if parsed.get("needs_review"):
+                                st.warning("Needs review.")
+                            warnings = parsed.get("warnings", [])
+                            if warnings:
+                                st.caption("Warnings")
+                                st.write(", ".join(warnings))
+                            confidences = parsed.get("confidences", {})
+                            if confidences:
+                                with st.expander("Confidences", expanded=False):
+                                    rows = [
+                                        {"Field": key, "Confidence": confidences[key]}
+                                        for key in sorted(confidences.keys())
+                                    ]
+                                    st.table(rows)
 
                 suggestions = _build_suggested_names(files, current_selections)
                 suggested_name = suggestions.get(file_ref.file_id, "")
