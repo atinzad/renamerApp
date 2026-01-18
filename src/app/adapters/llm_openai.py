@@ -59,6 +59,54 @@ class OpenAILLMAdapter(LLMPort):
         )
         return self._parse_response(content, candidates)
 
+    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+        if not self._api_key:
+            return {}
+        json_schema = self._coerce_json_schema(schema)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a structured extraction assistant. "
+                    "Return JSON that matches the provided schema. "
+                    "If a value is missing, return \"UNKNOWN\" for that field."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Extract fields from the OCR text using this schema.\n"
+                    f"Schema:\n{json.dumps(json_schema)}\n\n"
+                    "OCR text:\n"
+                    f"{ocr_text}"
+                ),
+            },
+        ]
+        response = self._post_completion(
+            messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "extracted_fields",
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            },
+        )
+        if response is None:
+            parsed = {}
+        else:
+            parsed = self._parse_fields_response(response)
+        if not parsed:
+            response = self._post_completion(
+                messages,
+                response_format={"type": "json_object"},
+            )
+            if response is None:
+                return {}
+            parsed = self._parse_fields_response(response)
+        return parsed
+
     def _build_messages(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
     ) -> list[dict[str, str]]:
@@ -142,3 +190,61 @@ class OpenAILLMAdapter(LLMPort):
             seen.add(signal)
             deduped.append(signal)
         return deduped
+
+    @staticmethod
+    def _coerce_json_schema(schema: dict) -> dict:
+        if isinstance(schema, dict) and schema.get("type") and schema.get("properties"):
+            return schema
+        properties = {}
+        if isinstance(schema, dict):
+            for key in schema.keys():
+                properties[str(key)] = {"type": "string"}
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties.keys()),
+            "additionalProperties": False,
+        }
+
+    def _post_completion(
+        self, messages: list[dict[str, str]], response_format: dict
+    ) -> dict | None:
+        try:
+            response = requests.post(
+                f"{self._base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "response_format": response_format,
+                    "temperature": 0.0,
+                    "max_tokens": 800,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+        return response.json()
+
+    @staticmethod
+    def _parse_fields_response(payload: dict) -> dict:
+        content = (
+            payload.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(data, dict):
+            fields = data.get("fields")
+            if isinstance(fields, dict):
+                return fields
+            return data
+        return {}

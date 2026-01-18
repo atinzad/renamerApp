@@ -11,3 +11,15 @@ class MockLLMAdapter(LLMPort):
         return LabelFallbackClassification(
             label_name=None, confidence=0.0, signals=["LLM_NOT_CONFIGURED"]
         )
+
+    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+        return {key: "UNKNOWN" for key in _schema_keys(schema)}
+
+
+def _schema_keys(schema: dict) -> list[str]:
+    if not isinstance(schema, dict):
+        return []
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        return list(properties.keys())
+    return list(schema.keys())
