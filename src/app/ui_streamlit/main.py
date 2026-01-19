@@ -318,6 +318,51 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                                 break
                         else:
                             st.success("Examples saved.")
+                st.divider()
+                st.caption("Add example (paste OCR text)")
+                new_example_key = f"new_example_{label.label_id}"
+                new_example_text = st.text_area(
+                    "New example OCR text",
+                    value=st.session_state.get(new_example_key, ""),
+                    key=new_example_key,
+                    height=140,
+                )
+                if st.button(
+                    "Add example",
+                    key=f"add_example_{label.label_id}",
+                ):
+                    if not new_example_text.strip():
+                        st.error("Paste OCR text first.")
+                    else:
+                        try:
+                            example_id = None
+                            file_id = f"manual:{uuid4()}"
+                            filename = "manual_ocr.txt"
+                            example = services["storage"].attach_label_example(
+                                label.label_id,
+                                file_id,
+                                filename,
+                            )
+                            example_id = example.example_id
+                            tokens = normalize_text_to_tokens(new_example_text)
+                            embedding = None
+                            try:
+                                embedding = services["embeddings"].embed_text(
+                                    new_example_text
+                                )
+                            except Exception:
+                                embedding = None
+                            services["storage"].save_label_example_features(
+                                example_id,
+                                new_example_text,
+                                embedding,
+                                tokens,
+                            )
+                            st.session_state[new_example_key] = ""
+                            st.success("Example added.")
+                            _trigger_rerun()
+                        except Exception as exc:
+                            st.error(f"Failed to add example: {exc}")
 
 
 def _get_services(access_token: str, sqlite_path: str):
@@ -1091,7 +1136,7 @@ def main() -> None:
                 if new_name.strip():
                     edits[file_ref.file_id] = new_name
 
-                if job_id and st.session_state.get("ocr_ready"):
+                if job_id:
                     with st.expander("View OCR", expanded=False):
                         try:
                             token = _ensure_access_token(access_token, client_id, client_secret)
