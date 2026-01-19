@@ -22,7 +22,10 @@ def test_extraction_service_stores_fields(tmp_path) -> None:
         job.job_id,
         [FileRef(file_id="file-1", name="a", mime_type="image/png", sort_index=1)],
     )
-    label = storage.create_label("Civil_ID", "{}", "")
+    label_schema = json.dumps(
+        {"type": "object", "properties": {"civil_id": {"type": "string"}}}
+    )
+    label = storage.create_label("Civil_ID", label_schema, "")
     storage.upsert_file_label_assignment(
         job.job_id, "file-1", label.label_id, 1.0, MATCHED
     )
