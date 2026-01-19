@@ -257,15 +257,16 @@ class SQLiteStorage(StoragePort):
             extraction_schema_json=extraction_schema_json,
             naming_template=naming_template,
             llm="",
+            extraction_instructions="",
         )
         try:
             with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO labels(
-                        label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
+                        label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm, extraction_instructions
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         label.label_id,
@@ -275,6 +276,7 @@ class SQLiteStorage(StoragePort):
                         label.extraction_schema_json,
                         label.naming_template,
                         label.llm,
+                        label.extraction_instructions,
                     ),
                 )
             return label
@@ -301,7 +303,7 @@ class SQLiteStorage(StoragePort):
                 if include_inactive:
                     rows = conn.execute(
                         """
-                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
+                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm, extraction_instructions
                         FROM labels
                         ORDER BY created_at ASC, label_id ASC
                         """
@@ -309,7 +311,7 @@ class SQLiteStorage(StoragePort):
                 else:
                     rows = conn.execute(
                         """
-                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
+                        SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm, extraction_instructions
                         FROM labels
                         WHERE is_active = 1
                         ORDER BY created_at ASC, label_id ASC
@@ -324,6 +326,7 @@ class SQLiteStorage(StoragePort):
                     extraction_schema_json=row[4],
                     naming_template=row[5],
                     llm=row[6] if row[6] is not None else "",
+                    extraction_instructions=row[7] if row[7] is not None else "",
                 )
                 for row in rows
             ]
@@ -335,7 +338,7 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm
+                    SELECT label_id, name, is_active, created_at, extraction_schema_json, naming_template, llm, extraction_instructions
                     FROM labels
                     WHERE label_id = ?
                     """,
@@ -351,6 +354,7 @@ class SQLiteStorage(StoragePort):
                 extraction_schema_json=row[4],
                 naming_template=row[5],
                 llm=row[6] if row[6] is not None else "",
+                extraction_instructions=row[7] if row[7] is not None else "",
             )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch label") from exc
@@ -1098,6 +1102,22 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to update label extraction schema") from exc
 
+    def update_label_extraction_instructions(
+        self, label_id: str, instructions: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE labels
+                    SET extraction_instructions = ?
+                    WHERE label_id = ?
+                    """,
+                    (instructions, label_id),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to update label extraction instructions") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
@@ -1163,10 +1183,27 @@ class SQLiteStorage(StoragePort):
                         created_at TEXT,
                         extraction_schema_json TEXT,
                         naming_template TEXT,
-                        llm TEXT
+                        llm TEXT,
+                        extraction_instructions TEXT
                     )
                     """
                 )
+                columns = conn.execute("PRAGMA table_info(labels)").fetchall()
+                column_names = {row[1] for row in columns}
+                if "extraction_instructions" not in column_names:
+                    conn.execute(
+                        """
+                        ALTER TABLE labels
+                        ADD COLUMN extraction_instructions TEXT
+                        """
+                    )
+                    conn.execute(
+                        """
+                        UPDATE labels
+                        SET extraction_instructions = ''
+                        WHERE extraction_instructions IS NULL
+                        """
+                    )
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS label_examples(
