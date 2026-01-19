@@ -51,7 +51,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
         "label_service": LabelService(drive, ocr, embeddings, storage),
         "llm_fallback_label_service": LLMFallbackLabelService(storage, llm),
         "extraction_service": ExtractionService(llm, storage),
-        "schema_builder_service": SchemaBuilderService(storage),
+        "schema_builder_service": SchemaBuilderService(storage, llm),
         "ocr_service": OCRService(drive, ocr, storage),
         "presets_service": presets_service,
         "rename_service": RenameService(drive, storage),
