@@ -25,6 +25,7 @@ from app.services.ocr_service import OCRService
 from app.services.presets_service import PresetsService
 from app.services.report_service import ReportService
 from app.services.rename_service import RenameService
+from app.services.schema_builder_service import SchemaBuilderService
 
 
 def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
@@ -50,6 +51,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
         "label_service": LabelService(drive, ocr, embeddings, storage),
         "llm_fallback_label_service": LLMFallbackLabelService(storage, llm),
         "extraction_service": ExtractionService(llm, storage),
+        "schema_builder_service": SchemaBuilderService(storage),
         "ocr_service": OCRService(drive, ocr, storage),
         "presets_service": presets_service,
         "rename_service": RenameService(drive, storage),

@@ -20,7 +20,7 @@ class ExtractionService:
             self.extract_fields_for_file(job_id, file_ref.file_id)
 
     def extract_fields_for_file(self, job_id: str, file_id: str) -> None:
-        schema, schema_warnings = self._resolve_schema(job_id, file_id)
+        schema, schema_warnings, instructions = self._resolve_schema(job_id, file_id)
         ocr_text = self._get_ocr_text(job_id, file_id)
         warnings: list[str] = list(schema_warnings)
         needs_review = False
@@ -33,7 +33,7 @@ class ExtractionService:
             needs_review = True
             extracted = {}
         else:
-            extracted = self._llm.extract_fields(schema, ocr_text) or {}
+            extracted = self._llm.extract_fields(schema, ocr_text, instructions) or {}
         fields, missing_warnings, missing_review = apply_missing_field_policy(
             schema, extracted
         )
@@ -54,9 +54,10 @@ class ExtractionService:
             updated_at=updated_at,
         )
 
-    def _resolve_schema(self, job_id: str, file_id: str) -> tuple[dict, list[str]]:
+    def _resolve_schema(self, job_id: str, file_id: str) -> tuple[dict, list[str], str]:
         label_id = None
         warnings: list[str] = []
+        instructions = ""
         override = self._storage.get_file_label_override(job_id, file_id)
         if override and override.get("label_id"):
             label_id = override["label_id"]
@@ -69,10 +70,11 @@ class ExtractionService:
             if label and label.extraction_schema_json:
                 schema = self._parse_schema(label.extraction_schema_json)
                 if schema is not None:
-                    return schema, warnings
+                    instructions = label.extraction_instructions or ""
+                    return schema, warnings, instructions
                 warnings.append("INVALID_SCHEMA")
-                return GENERIC_MIN_SCHEMA, warnings
-        return GENERIC_MIN_SCHEMA, warnings
+                return GENERIC_MIN_SCHEMA, warnings, self._default_instructions()
+        return GENERIC_MIN_SCHEMA, warnings, self._default_instructions()
 
     @staticmethod
     def _parse_schema(value: str) -> dict | None:
@@ -98,6 +100,10 @@ class ExtractionService:
         if isinstance(properties, dict):
             return len(properties) == 0
         return False
+
+    @staticmethod
+    def _default_instructions() -> str:
+        return 'Extract fields according to this schema. If a field is missing, return "UNKNOWN".'
 
     def _ordered_files(self, job_id: str) -> list:
         files = self._storage.get_job_files(job_id)

@@ -11,7 +11,9 @@ class DummyLLM(LLMPort):
     def classify_label(self, ocr_text, candidates):  # pragma: no cover
         raise NotImplementedError
 
-    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
         return {"civil_id": "123", "birth_date": "1995-08-07"}
 
 
