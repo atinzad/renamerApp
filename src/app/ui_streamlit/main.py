@@ -236,6 +236,28 @@ def _parse_extraction_payload(extraction: dict | None) -> dict[str, object]:
     }
 
 
+def _ocr_text_to_example(ocr_text: str) -> dict:
+    example: dict[str, object] = {}
+    for raw_line in ocr_text.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key in example:
+            existing = example[key]
+            if isinstance(existing, list):
+                existing.append(value)
+            else:
+                example[key] = [existing, value]
+        else:
+            example[key] = value
+    return example
+
+
 def _render_labels_view(access_token: str, sqlite_path: str) -> None:
     st.subheader("Labels")
     try:
@@ -270,6 +292,48 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                         st.success("Schema saved.")
                     except Exception as exc:
                         st.error(f"Save failed: {exc}")
+            instructions_key = f"instructions_{label.label_id}"
+            instructions_value = st.text_area(
+                "Extraction instructions",
+                value=label.extraction_instructions or "",
+                key=instructions_key,
+                height=140,
+            )
+            if st.button(
+                "Save instructions",
+                key=f"save_instructions_{label.label_id}",
+            ):
+                try:
+                    services["storage"].update_label_extraction_instructions(
+                        label.label_id, instructions_value.strip()
+                    )
+                    st.success("Instructions saved.")
+                except Exception as exc:
+                    st.error(f"Save failed: {exc}")
+            with st.expander("Build schema from example", expanded=False):
+                example_key = f"schema_example_{label.label_id}"
+                example_value = st.text_area(
+                    "Example OCR text",
+                    value=st.session_state.get(example_key, ""),
+                    key=example_key,
+                    height=200,
+                )
+                if st.button(
+                    "Generate schema",
+                    key=f"generate_schema_{label.label_id}",
+                ):
+                    if not example_value.strip():
+                        st.error("Provide OCR text first.")
+                    else:
+                        try:
+                            with st.spinner("Generating schema..."):
+                                services["schema_builder_service"].build_from_ocr(
+                                    label.label_id, example_value
+                                )
+                            st.success("Schema generated from OCR.")
+                            _trigger_rerun()
+                        except Exception as exc:
+                            st.error(f"Schema generation failed: {exc}")
             with st.expander("Examples", expanded=False):
                 try:
                     examples = services["storage"].list_label_examples(label.label_id)
