@@ -503,7 +503,7 @@ Notes:
 ## 10. INCREMENT 6 SPEC — Field Extraction (Reporting + Decision Support)
 ### 10.1 Scope (MUST implement)
 - Use a single Dynamic Extractor Agent hydrated at runtime
-- Extraction uses OCR text and a label-specific JSON schema to produce structured fields
+- Extraction uses OCR text, label-specific JSON schema, and label-specific instructions to produce structured fields
 - Extracted fields are stored and rendered into the report for downstream review/decision making
 - No filename proposal logic in this increment
 
@@ -519,20 +519,27 @@ For each file:
 - Missing field handling:
   - If required field missing -> include placeholder "UNKNOWN"
   - Or mark as “needs review” in extracted fields
+- Example-driven schema builder:
+  - User provides an OCR example for a label
+  - System generates extraction_schema_json + extraction_instructions
 
 ### 10.4 Port requirements
 - LLMPort MUST add a generic “extract_fields” method:
-  - extract_fields(schema: dict, ocr_text: str) -> dict
+  - extract_fields(schema: dict, ocr_text: str, instructions: str | None = None) -> dict
 - LLMAdapter MUST use structured output (JSON mode) to satisfy the provided schema
 - StoragePort methods to store extraction results
+- StoragePort MUST support label extraction instructions
 
 ### 10.5 Services requirements
 - ExtractionService
   - extract_fields_for_job(job_id) -> None
-  - Fetch label schema from storage and hydrate the extractor per file
-  - Pass schema + OCR text to LLMPort for structured output
+  - Fetch label schema + extraction instructions from storage and hydrate the extractor per file
+  - Pass schema + OCR text + instructions to LLMPort for structured output
   - Store extraction results
   - No naming proposal service in this increment
+- SchemaBuilderService
+  - build_from_ocr(label_id, ocr_text) -> (schema, instructions)
+  - Persists extraction_schema_json and extraction_instructions
 
 ### 10.6 Storage changes (SQLite)
 - Add tables:
@@ -541,6 +548,8 @@ For each file:
 ### 10.7 UI requirements
 - Labels page:
   - For each label: define extraction_schema (JSON)
+  - For each label: define extraction_instructions (text)
+  - “Build schema from OCR example” action that generates schema + instructions
 - Job page:
   - Button: “Extract fields”
   - For each file: show extracted fields (expandable)
@@ -549,6 +558,7 @@ For each file:
 - At least one extractor works end-to-end
 - Extracted fields are stored and visible in the report/UI
 - Warnings are produced for missing/uncertain fields
+- Labels support extraction instructions and OCR-driven schema generation
 
 ## 11. INCREMENT 7 SPEC — Report Filled via Consolidation
 ### 11.1 Scope (MUST implement)
