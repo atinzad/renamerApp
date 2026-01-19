@@ -58,6 +58,11 @@ class StoragePort(Protocol):
     def count_labels(self) -> int:
         """Return count of labels."""
 
+    def update_label_extraction_instructions(
+        self, label_id: str, instructions: str
+    ) -> None:
+        """Update extraction instructions for a label."""
+
     def attach_label_example(self, label_id: str, file_id: str, filename: str) -> LabelExample:
         """Attach a Drive file as an example for a label."""
 

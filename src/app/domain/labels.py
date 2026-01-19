@@ -17,6 +17,7 @@ class Label:
     extraction_schema_json: str
     naming_template: str
     llm: str
+    extraction_instructions: str = ""
 
 
 @dataclass

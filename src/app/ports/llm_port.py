@@ -12,5 +12,7 @@ class LLMPort(Protocol):
     ) -> LabelFallbackClassification:
         """Classify a label name from OCR text."""
 
-    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
         """Extract structured fields from OCR text using the provided schema."""
