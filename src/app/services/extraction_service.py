@@ -17,35 +17,38 @@ class ExtractionService:
     def extract_fields_for_job(self, job_id: str) -> None:
         files = self._ordered_files(job_id)
         for file_ref in files:
-            schema, schema_warnings = self._resolve_schema(job_id, file_ref.file_id)
-            ocr_text = self._get_ocr_text(job_id, file_ref.file_id)
-            warnings: list[str] = list(schema_warnings)
-            needs_review = False
-            if not ocr_text:
-                warnings.append("OCR_MISSING")
-                needs_review = True
-                extracted = {}
-            else:
-                extracted = self._llm.extract_fields(schema, ocr_text) or {}
-            fields, missing_warnings, missing_review = apply_missing_field_policy(
-                schema, extracted
-            )
-            warnings.extend(missing_warnings)
-            needs_review = needs_review or missing_review
-            payload = {
-                "fields": fields,
-                "needs_review": needs_review,
-                "warnings": warnings,
-            }
-            updated_at = datetime.now(timezone.utc).isoformat()
-            self._storage.save_extraction(
-                job_id=job_id,
-                file_id=file_ref.file_id,
-                schema_json=json.dumps(schema),
-                fields_json=json.dumps(payload),
-                confidences_json=json.dumps({}),
-                updated_at=updated_at,
-            )
+            self.extract_fields_for_file(job_id, file_ref.file_id)
+
+    def extract_fields_for_file(self, job_id: str, file_id: str) -> None:
+        schema, schema_warnings = self._resolve_schema(job_id, file_id)
+        ocr_text = self._get_ocr_text(job_id, file_id)
+        warnings: list[str] = list(schema_warnings)
+        needs_review = False
+        if not ocr_text:
+            warnings.append("OCR_MISSING")
+            needs_review = True
+            extracted = {}
+        else:
+            extracted = self._llm.extract_fields(schema, ocr_text) or {}
+        fields, missing_warnings, missing_review = apply_missing_field_policy(
+            schema, extracted
+        )
+        warnings.extend(missing_warnings)
+        needs_review = needs_review or missing_review
+        payload = {
+            "fields": fields,
+            "needs_review": needs_review,
+            "warnings": warnings,
+        }
+        updated_at = datetime.now(timezone.utc).isoformat()
+        self._storage.save_extraction(
+            job_id=job_id,
+            file_id=file_id,
+            schema_json=json.dumps(schema),
+            fields_json=json.dumps(payload),
+            confidences_json=json.dumps({}),
+            updated_at=updated_at,
+        )
 
     def _resolve_schema(self, job_id: str, file_id: str) -> tuple[dict, list[str]]:
         label_id = None

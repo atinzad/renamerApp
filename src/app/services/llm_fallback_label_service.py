@@ -52,31 +52,72 @@ class LLMFallbackLabelService:
 
         for file_ref in self._storage.get_job_files(job_id):
             file_id = file_ref.file_id
-            if file_id in overrides:
-                continue
-            if file_id in llm_overrides:
-                continue
-            assignment = assignments.get(file_id)
-            if assignment is not None and assignment.get("status") != NO_MATCH:
-                continue
-            ocr = self._storage.get_ocr_result(job_id, file_id)
-            if ocr is None or not ocr.text:
-                continue
-            result = self._classify_file(ocr.text, candidates)
-            updated_at = datetime.now(timezone.utc).isoformat()
-            self._storage.upsert_llm_label_classification(
+            self._classify_file_for_job(
                 job_id,
                 file_id,
-                result.label_name,
-                result.confidence,
-                result.signals,
-                updated_at,
+                candidates,
+                assignments,
+                overrides,
+                llm_overrides,
             )
+
+    def classify_file(self, job_id: str, file_id: str) -> None:
+        candidates = self._load_fallback_candidates()
+        if not candidates:
+            raise RuntimeError("No fallback labels configured (labels with non-empty llm).")
+        self._ensure_llm_configured()
+        assignments = {
+            item.get("file_id"): item
+            for item in self._storage.list_file_label_assignments(job_id)
+        }
+        overrides = {
+            item.get("file_id"): item
+            for item in self._storage.list_file_label_overrides(job_id)
+        }
+        llm_overrides = self._storage.list_llm_label_overrides(job_id)
+        self._classify_file_for_job(
+            job_id,
+            file_id,
+            candidates,
+            assignments,
+            overrides,
+            llm_overrides,
+        )
 
     def _ensure_llm_configured(self) -> None:
         provider = LLM_PROVIDER.lower()
         if provider == "mock" or (provider == "openai" and not OPENAI_API_KEY):
             raise RuntimeError("LLM provider not configured. Set LLM_PROVIDER and OPENAI_API_KEY.")
+
+    def _classify_file_for_job(
+        self,
+        job_id: str,
+        file_id: str,
+        candidates: list[LabelFallbackCandidate],
+        assignments: dict[str, dict],
+        overrides: dict[str, dict],
+        llm_overrides: dict[str, str],
+    ) -> None:
+        if file_id in overrides:
+            return
+        if file_id in llm_overrides:
+            return
+        assignment = assignments.get(file_id)
+        if assignment is not None and assignment.get("status") != NO_MATCH:
+            return
+        ocr = self._storage.get_ocr_result(job_id, file_id)
+        if ocr is None or not ocr.text:
+            return
+        result = self._classify_file(ocr.text, candidates)
+        updated_at = datetime.now(timezone.utc).isoformat()
+        self._storage.upsert_llm_label_classification(
+            job_id,
+            file_id,
+            result.label_name,
+            result.confidence,
+            result.signals,
+            updated_at,
+        )
 
     def _classify_file(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]

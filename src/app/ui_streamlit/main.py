@@ -1149,6 +1149,78 @@ def main() -> None:
                                     ]
                                     st.table(rows)
 
+                if job_id:
+                    with st.container():
+                        col_ocr, col_classify, col_fallback, col_extract = st.columns(4)
+                        if col_ocr.button(
+                            "Run OCR",
+                            key=f"run_ocr_{file_ref.file_id}",
+                        ):
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
+                                )
+                                services = _get_services(token, sqlite_path)
+                                with st.spinner("Running OCR..."):
+                                    services["ocr_service"].run_ocr(
+                                        job_id, [file_ref.file_id]
+                                    )
+                                st.session_state["ocr_refresh_token"] = str(uuid4())
+                                st.success("OCR completed.")
+                                _trigger_rerun()
+                            except Exception as exc:
+                                st.error(f"OCR failed: {exc}")
+                        if col_classify.button(
+                            "Classify file",
+                            key=f"classify_file_{file_ref.file_id}",
+                        ):
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
+                                )
+                                services = _get_services(token, sqlite_path)
+                                services["label_classification_service"].classify_file(
+                                    job_id, file_ref.file_id
+                                )
+                                st.success("Classification completed.")
+                                _trigger_rerun()
+                            except Exception as exc:
+                                st.error(f"Classification failed: {exc}")
+                        if col_fallback.button(
+                            "Classify fallback (LLM)",
+                            key=f"fallback_file_{file_ref.file_id}",
+                        ):
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
+                                )
+                                services = _get_services(token, sqlite_path)
+                                with st.spinner("Classifying fallback label..."):
+                                    services[
+                                        "llm_fallback_label_service"
+                                    ].classify_file(job_id, file_ref.file_id)
+                                st.success("Fallback classification completed.")
+                                _trigger_rerun()
+                            except Exception as exc:
+                                st.error(f"Fallback classification failed: {exc}")
+                        if col_extract.button(
+                            "Extract fields",
+                            key=f"extract_file_{file_ref.file_id}",
+                        ):
+                            try:
+                                token = _ensure_access_token(
+                                    access_token, client_id, client_secret
+                                )
+                                services = _get_services(token, sqlite_path)
+                                with st.spinner("Extracting fields..."):
+                                    services["extraction_service"].extract_fields_for_file(
+                                        job_id, file_ref.file_id
+                                    )
+                                st.success("Extraction completed.")
+                                _trigger_rerun()
+                            except Exception as exc:
+                                st.error(f"Extraction failed: {exc}")
+
                 suggestions = _build_suggested_names(files, current_selections)
                 suggested_name = suggestions.get(file_ref.file_id, "")
                 effective_label = current_selections.get(file_ref.file_id)
