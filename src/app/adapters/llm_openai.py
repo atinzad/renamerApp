@@ -59,15 +59,20 @@ class OpenAILLMAdapter(LLMPort):
         )
         return self._parse_response(content, candidates)
 
-    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
         if not self._api_key:
             return {}
         json_schema = self._coerce_json_schema(schema)
+        instructions = instructions.strip() if instructions else ""
+        instruction_line = f"{instructions}\n\n" if instructions else ""
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You are a structured extraction assistant. "
+                    f"{instruction_line}"
                     "Return JSON that matches the provided schema. "
                     "If a value is missing, return \"UNKNOWN\" for that field."
                 ),

@@ -12,7 +12,10 @@ class MockLLMAdapter(LLMPort):
             label_name=None, confidence=0.0, signals=["LLM_NOT_CONFIGURED"]
         )
 
-    def extract_fields(self, schema: dict, ocr_text: str) -> dict:
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
+        _ = instructions
         return {key: "UNKNOWN" for key in _schema_keys(schema)}
 
 
