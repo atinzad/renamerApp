@@ -76,6 +76,12 @@ class StoragePort(Protocol):
     def get_label_example_features(self, example_id: str) -> dict | None:
         """Return OCR text and features for a label example."""
 
+    def delete_label_example(self, example_id: str) -> None:
+        """Delete a label example and its stored features."""
+
+    def delete_label(self, label_id: str) -> None:
+        """Delete a label and any related references."""
+
     def upsert_file_label_assignment(
         self,
         job_id: str,

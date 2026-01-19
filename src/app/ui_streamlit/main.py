@@ -291,6 +291,18 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                             key=example_key,
                             height=140,
                         )
+                        if st.button(
+                            "Delete example",
+                            key=f"delete_example_{example.example_id}",
+                        ):
+                            try:
+                                services["storage"].delete_label_example(
+                                    example.example_id
+                                )
+                                st.success("Example deleted.")
+                                _trigger_rerun()
+                            except Exception as exc:
+                                st.error(f"Failed to delete example: {exc}")
                     if st.button(
                         "Save examples",
                         key=f"save_examples_{label.label_id}",
@@ -363,6 +375,22 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                             _trigger_rerun()
                         except Exception as exc:
                             st.error(f"Failed to add example: {exc}")
+            st.divider()
+            confirm_key = f"confirm_delete_{label.label_id}"
+            confirm = st.checkbox(
+                "I understand this will delete the label and its examples.",
+                key=confirm_key,
+            )
+            if st.button("Delete label", key=f"delete_label_{label.label_id}"):
+                if not confirm:
+                    st.error("Confirm label deletion first.")
+                else:
+                    try:
+                        services["storage"].delete_label(label.label_id)
+                        st.success("Label deleted.")
+                        _trigger_rerun()
+                    except Exception as exc:
+                        st.error(f"Failed to delete label: {exc}")
 
 
 def _get_services(access_token: str, sqlite_path: str):

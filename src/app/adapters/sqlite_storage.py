@@ -468,6 +468,78 @@ class SQLiteStorage(StoragePort):
         except (sqlite3.Error, json.JSONDecodeError) as exc:
             raise RuntimeError("Failed to fetch label example features") from exc
 
+    def delete_label_example(self, example_id: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM label_example_features
+                    WHERE example_id = ?
+                    """,
+                    (example_id,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM label_examples
+                    WHERE example_id = ?
+                    """,
+                    (example_id,),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to delete label example") from exc
+
+    def delete_label(self, label_id: str) -> None:
+        try:
+            with self._connect() as conn:
+                example_rows = conn.execute(
+                    """
+                    SELECT example_id
+                    FROM label_examples
+                    WHERE label_id = ?
+                    """,
+                    (label_id,),
+                ).fetchall()
+                example_ids = [row[0] for row in example_rows]
+                if example_ids:
+                    placeholders = ",".join("?" for _ in example_ids)
+                    conn.execute(
+                        f"""
+                        DELETE FROM label_example_features
+                        WHERE example_id IN ({placeholders})
+                        """,
+                        example_ids,
+                    )
+                conn.execute(
+                    """
+                    DELETE FROM label_examples
+                    WHERE label_id = ?
+                    """,
+                    (label_id,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM file_label_assignments
+                    WHERE label_id = ?
+                    """,
+                    (label_id,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM file_label_overrides
+                    WHERE label_id = ?
+                    """,
+                    (label_id,),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM labels
+                    WHERE label_id = ?
+                    """,
+                    (label_id,),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to delete label") from exc
+
     def upsert_file_label_assignment(
         self,
         job_id: str,
