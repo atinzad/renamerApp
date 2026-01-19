@@ -607,11 +607,17 @@ def main() -> None:
     view = st.sidebar.radio("View", ["Job", "Labels"], index=0)
 
     env_values = _load_env_file(_REPO_ROOT / ".env")
+    env_folder_id = env_values.get("FOLDER_ID", "")
+    sqlite_path = st.text_input("SQLite Path", value="./app.db")
+
+    if view == "Labels":
+        _render_labels_view("", sqlite_path)
+        return
+
     stored_client_id = _get_keyring_value(_KEYRING_CLIENT_ID) or ""
     stored_client_secret = _get_keyring_value(_KEYRING_CLIENT_SECRET) or ""
     env_client_id = env_values.get("OAUTH_CLIENT_ID", "")
     env_client_secret = env_values.get("OAUTH_CLIENT_SECRET", "")
-    env_folder_id = env_values.get("FOLDER_ID", "")
     env_access_token = env_values.get("GOOGLE_DRIVE_ACCESS_TOKEN", "")
     if env_access_token and not st.session_state.get("manual_access_token"):
         st.session_state["manual_access_token"] = env_access_token
@@ -756,11 +762,6 @@ def main() -> None:
         value=env_folder_id,
         help="Paste a Drive folder ID or the full folder URL.",
     )
-    sqlite_path = st.text_input("SQLite Path", value="./app.db")
-
-    if view == "Labels":
-        _render_labels_view(access_token or "", sqlite_path)
-        return
 
     cols = st.columns(4)
     list_clicked = cols[0].button("List Files")
