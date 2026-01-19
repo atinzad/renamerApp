@@ -24,7 +24,11 @@ class ExtractionService:
         ocr_text = self._get_ocr_text(job_id, file_id)
         warnings: list[str] = list(schema_warnings)
         needs_review = False
-        if not ocr_text:
+        if self._is_empty_schema(schema):
+            warnings.append("EMPTY_SCHEMA")
+            needs_review = True
+            extracted = {}
+        elif not ocr_text:
             warnings.append("OCR_MISSING")
             needs_review = True
             extracted = {}
@@ -83,6 +87,17 @@ class ExtractionService:
         if result is None or not result.text.strip():
             return ""
         return result.text
+
+    @staticmethod
+    def _is_empty_schema(schema: dict) -> bool:
+        if not isinstance(schema, dict):
+            return True
+        if not schema:
+            return True
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            return len(properties) == 0
+        return False
 
     def _ordered_files(self, job_id: str) -> list:
         files = self._storage.get_job_files(job_id)
