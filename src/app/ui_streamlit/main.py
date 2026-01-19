@@ -941,6 +941,9 @@ def main() -> None:
             labels_data = _load_labels_json_readonly()
             using_json_fallback = True
     label_names = [label.get("name") for label in labels_data if label.get("name")]
+    label_name_by_id = {
+        label_id: name for name, label_id in label_id_map.items() if name and label_id
+    }
     fallback_candidates = list_fallback_candidates(labels_data)
     fallback_candidate_names = [candidate.name for candidate in fallback_candidates]
     classification_results = st.session_state.get("classification_results", {})
@@ -1182,6 +1185,33 @@ def main() -> None:
                                 services["label_classification_service"].classify_file(
                                     job_id, file_ref.file_id
                                 )
+                                assignment = services["storage"].get_file_label_assignment(
+                                    job_id, file_ref.file_id
+                                )
+                                if assignment:
+                                    label_id = assignment.get("label_id")
+                                    status = assignment.get("status", NO_MATCH)
+                                    score = float(assignment.get("score", 0.0))
+                                    label_name = label_name_by_id.get(label_id)
+                                    classification_results[file_ref.file_id] = {
+                                        "label": label_name,
+                                        "score": score,
+                                        "status": status,
+                                    }
+                                    st.session_state["classification_results"] = (
+                                        classification_results
+                                    )
+                                    if status == MATCHED and label_name:
+                                        current_selections[file_ref.file_id] = label_name
+                                        suggestions = _build_suggested_names(
+                                            files, current_selections
+                                        )
+                                        rename_key = f"edit_{file_ref.file_id}"
+                                        st.session_state[rename_key] = suggestions.get(
+                                            file_ref.file_id, ""
+                                        )
+                                    else:
+                                        current_selections[file_ref.file_id] = None
                                 st.success("Classification completed.")
                                 _trigger_rerun()
                             except Exception as exc:
@@ -1236,6 +1266,34 @@ def main() -> None:
                 )
                 if new_name.strip():
                     edits[file_ref.file_id] = new_name
+                if st.button(
+                    "Apply rename for this file",
+                    key=f"apply_rename_{file_ref.file_id}",
+                ):
+                    if not job_id:
+                        st.error("No job is active.")
+                    elif not new_name.strip():
+                        st.error("Enter a new filename first.")
+                    else:
+                        try:
+                            token = _ensure_access_token(
+                                access_token, client_id, client_secret
+                            )
+                            services = _get_services(token, sqlite_path)
+                            ops = services["rename_service"].preview_manual_rename(
+                                job_id, {file_ref.file_id: new_name}
+                            )
+                            if not ops:
+                                st.info("No rename operation generated.")
+                            else:
+                                services["rename_service"].apply_rename(job_id, ops)
+                                st.session_state["files"] = services[
+                                    "jobs_service"
+                                ].list_files(job_id)
+                                st.success("Rename applied.")
+                                _trigger_rerun()
+                        except Exception as exc:
+                            st.error(f"Rename failed: {exc}")
 
                 if job_id:
                     with st.expander("View OCR", expanded=False):
