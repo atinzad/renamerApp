@@ -317,31 +317,34 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                     st.success("Instructions saved.")
                 except Exception as exc:
                     st.error(f"Save failed: {exc}")
-            with st.expander("Build schema from example", expanded=False):
-                example_key = f"schema_example_{label.label_id}"
-                example_value = st.text_area(
-                    "Example OCR text",
-                    value=st.session_state.get(example_key, ""),
-                    key=example_key,
-                    height=200,
-                )
+            with st.expander("Build schema from examples", expanded=False):
+                st.caption("Uses all stored OCR examples for this label.")
                 if st.button(
                     "Generate schema",
                     key=f"generate_schema_{label.label_id}",
                 ):
-                    if not example_value.strip():
-                        st.error("Provide OCR text first.")
-                    else:
-                        try:
+                    try:
+                        examples = services["storage"].list_label_examples(label.label_id)
+                        ocr_texts: list[str] = []
+                        for example in examples:
+                            features = services["storage"].get_label_example_features(
+                                example.example_id
+                            )
+                            if features and features.get("ocr_text"):
+                                ocr_texts.append(features["ocr_text"])
+                        if not ocr_texts:
+                            st.error("No OCR examples available for this label.")
+                        else:
+                            combined = "\n\n".join(ocr_texts)
                             with st.spinner("Generating schema..."):
                                 services["schema_builder_service"].build_from_ocr(
-                                    label.label_id, example_value
+                                    label.label_id, combined
                                 )
-                            st.success("Schema generated from OCR.")
+                            st.success("Schema generated from examples.")
                             st.session_state[refresh_schema_key] = True
                             _trigger_rerun()
-                        except Exception as exc:
-                            st.error(f"Schema generation failed: {exc}")
+                    except Exception as exc:
+                        st.error(f"Schema generation failed: {exc}")
             with st.expander("Examples", expanded=False):
                 try:
                     examples = services["storage"].list_label_examples(label.label_id)
