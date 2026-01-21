@@ -1052,24 +1052,6 @@ def main() -> None:
                 selected_label = None if choice == "(Clear)" else choice
                 previous_label = current_selections.get(file_ref.file_id)
                 current_selections[file_ref.file_id] = selected_label
-                if selected_label and selected_label != previous_label and job_id:
-                    try:
-                        token = _ensure_access_token(access_token, client_id, client_secret)
-                        services = _get_services(token, sqlite_path)
-                        label_id = label_id_map.get(selected_label)
-                        if label_id:
-                            examples = services["storage"].list_label_examples(label_id)
-                            if not any(
-                                example.file_id == file_ref.file_id for example in examples
-                            ):
-                                services["label_service"].attach_example(
-                                    label_id, file_ref.file_id
-                                )
-                                services["label_service"].process_examples(
-                                    label_id, job_id=job_id
-                                )
-                    except Exception:
-                        pass
                 if selected_label and job_id:
                     if st.button(
                         "Add as label example",
