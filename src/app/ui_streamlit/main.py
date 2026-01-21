@@ -1070,6 +1070,41 @@ def main() -> None:
                                 )
                     except Exception:
                         pass
+                if selected_label and job_id:
+                    if st.button(
+                        "Add as label example",
+                        key=f"add_example_{file_ref.file_id}",
+                    ):
+                        try:
+                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            services = _get_services(token, sqlite_path)
+                            ocr_result = services["storage"].get_ocr_result(
+                                job_id, file_ref.file_id
+                            )
+                            if ocr_result is None or not ocr_result.text.strip():
+                                st.error("Run OCR first to capture this example.")
+                            else:
+                                label_id = label_id_map.get(selected_label)
+                                if not label_id:
+                                    st.error("Label not found.")
+                                else:
+                                    examples = services["storage"].list_label_examples(label_id)
+                                    if any(
+                                        example.file_id == file_ref.file_id
+                                        for example in examples
+                                    ):
+                                        st.info("This file is already an example for the label.")
+                                    else:
+                                        services["label_service"].attach_example(
+                                            label_id, file_ref.file_id
+                                        )
+                                        services["label_service"].process_examples(
+                                            label_id, job_id=job_id
+                                        )
+                                        st.success("Example added to label.")
+                                        _trigger_rerun()
+                        except Exception as exc:
+                            st.error(f"Add example failed: {exc}")
 
                 with st.expander("Create new label", expanded=False):
                     new_label_key = f"new_label_{file_ref.file_id}"
