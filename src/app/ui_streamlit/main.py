@@ -1065,6 +1065,10 @@ def main() -> None:
 
                 with st.expander("Create new label", expanded=False):
                     new_label_key = f"new_label_{file_ref.file_id}"
+                    clear_key = f"clear_label_{file_ref.file_id}"
+                    if st.session_state.get(clear_key):
+                        st.session_state[new_label_key] = ""
+                        st.session_state[clear_key] = False
                     new_label = st.text_input(
                         "Label name",
                         value=st.session_state.get(new_label_key, ""),
@@ -1105,7 +1109,7 @@ def main() -> None:
                                         if label.get("name")
                                     ]
                                     current_selections[file_ref.file_id] = new_label.strip()
-                                    st.session_state[new_label_key] = ""
+                                    st.session_state[clear_key] = True
                                     st.success("Label created.")
                                     _trigger_rerun()
                             except Exception as exc:
