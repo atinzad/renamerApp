@@ -1144,7 +1144,7 @@ def main() -> None:
                 if result:
                     score_pct = f"{result['score'] * 100:.1f}%"
                     status = result["status"]
-                    label_name = result["label"] or ""
+                    label_name = result["label"] or "—"
                     st.write(f"Rule-based classification: {label_name} ({score_pct})")
                     st.caption(f"Status: {status}")
 
