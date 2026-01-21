@@ -1107,6 +1107,7 @@ def main() -> None:
                                     current_selections[file_ref.file_id] = new_label.strip()
                                     st.session_state[new_label_key] = ""
                                     st.success("Label created.")
+                                    _trigger_rerun()
                             except Exception as exc:
                                 st.error(f"Create label failed: {exc}")
 
