@@ -273,6 +273,13 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
         status = "Active" if label.is_active else "Inactive"
         with st.expander(f"{label.name} ({status})", expanded=False):
             schema_key = f"schema_{label.label_id}"
+            refresh_schema_key = f"refresh_schema_{label.label_id}"
+            if st.session_state.get(refresh_schema_key):
+                st.session_state[schema_key] = label.extraction_schema_json or "{}"
+                st.session_state[f"instructions_{label.label_id}"] = (
+                    label.extraction_instructions or ""
+                )
+                st.session_state[refresh_schema_key] = False
             schema_value = st.text_area(
                 "Extraction schema (JSON)",
                 value=label.extraction_schema_json or "{}",
@@ -331,6 +338,7 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                                     label.label_id, example_value
                                 )
                             st.success("Schema generated from OCR.")
+                            st.session_state[refresh_schema_key] = True
                             _trigger_rerun()
                         except Exception as exc:
                             st.error(f"Schema generation failed: {exc}")
