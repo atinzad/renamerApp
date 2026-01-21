@@ -63,6 +63,9 @@ class StoragePort(Protocol):
     ) -> None:
         """Update extraction instructions for a label."""
 
+    def update_label_llm(self, label_id: str, llm: str) -> None:
+        """Update LLM label instructions for a label."""
+
     def attach_label_example(self, label_id: str, file_id: str, filename: str) -> LabelExample:
         """Attach a Drive file as an example for a label."""
 

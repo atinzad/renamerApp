@@ -279,6 +279,7 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                 st.session_state[f"instructions_{label.label_id}"] = (
                     label.extraction_instructions or ""
                 )
+                st.session_state[f"llm_instruction_{label.label_id}"] = label.llm or ""
                 st.session_state[refresh_schema_key] = False
             schema_value = st.text_area(
                 "Extraction schema (JSON)",
@@ -315,6 +316,24 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                         label.label_id, instructions_value.strip()
                     )
                     st.success("Instructions saved.")
+                except Exception as exc:
+                    st.error(f"Save failed: {exc}")
+            llm_key = f"llm_instruction_{label.label_id}"
+            llm_value = st.text_area(
+                "LLM label instruction",
+                value=label.llm or "",
+                key=llm_key,
+                height=120,
+            )
+            if st.button(
+                "Save LLM instruction",
+                key=f"save_llm_{label.label_id}",
+            ):
+                try:
+                    services["storage"].update_label_llm(
+                        label.label_id, llm_value.strip()
+                    )
+                    st.success("LLM instruction saved.")
                 except Exception as exc:
                     st.error(f"Save failed: {exc}")
             with st.expander("Build schema from examples", expanded=False):
@@ -1121,6 +1140,13 @@ def main() -> None:
                                 else:
                                     label = services["label_service"].create_label(
                                         new_label.strip(), "{}", ""
+                                    )
+                                    default_llm = (
+                                        f"Identify {new_label.strip()}, "
+                                        "look for data that indicates this document type."
+                                    )
+                                    services["storage"].update_label_llm(
+                                        label.label_id, default_llm
                                     )
                                     services["label_service"].attach_example(
                                         label.label_id, file_ref.file_id

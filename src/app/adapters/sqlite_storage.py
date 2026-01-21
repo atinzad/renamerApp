@@ -1118,6 +1118,20 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to update label extraction instructions") from exc
 
+    def update_label_llm(self, label_id: str, llm: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE labels
+                    SET llm = ?
+                    WHERE label_id = ?
+                    """,
+                    (llm, label_id),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to update label llm") from exc
+
     def _ensure_schema(self) -> None:
         try:
             with self._connect() as conn:
