@@ -565,7 +565,7 @@ For each file:
 ## 11. INCREMENT 7 SPEC — Report Filled via Consolidation
 ### 11.1 Scope (MUST implement)
 - Generate a final REPORT.txt that is populated from extracted fields
-- Report inventory includes counts per label and per doc type
+- Report inventory includes counts per label
 
 ### 11.2 Consolidation rules (deterministic)
 - Consolidation is dynamic across all extracted keys:
