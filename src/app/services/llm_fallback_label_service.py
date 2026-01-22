@@ -122,26 +122,46 @@ class LLMFallbackLabelService:
     def _classify_file(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
     ) -> LLMFallbackLabelResult:
-        try:
-            classification = self._llm.classify_label(ocr_text, candidates)
-            label_name = classification.label_name
-            confidence = float(classification.confidence)
-            signals = list(classification.signals or [])
-        except Exception:
+        best_label = None
+        best_confidence = 0.0
+        best_signals: list[str] = []
+        any_success = False
+        for candidate in candidates:
+            try:
+                classification = self._llm.classify_label(ocr_text, [candidate])
+                any_success = True
+                confidence = float(classification.confidence)
+                label_name = classification.label_name
+                signals = list(classification.signals or [])
+            except Exception:
+                continue
+            if label_name is None:
+                continue
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_label = label_name
+                best_signals = signals
+        if not any_success:
             return LLMFallbackLabelResult(
                 label_name=None,
                 confidence=0.0,
                 signals=["LLM_CLASSIFICATION_FAILED"],
             )
-        if confidence < LLM_LABEL_MIN_CONFIDENCE:
-            if label_name is not None:
-                label_name = None
+        if best_confidence < LLM_LABEL_MIN_CONFIDENCE or best_label is None:
+            signals = list(best_signals)
             if "BELOW_MIN_CONFIDENCE" not in signals:
                 signals.append("BELOW_MIN_CONFIDENCE")
+            if "ABSTAIN_NOT_ENOUGH_EVIDENCE" not in signals:
+                signals.append("ABSTAIN_NOT_ENOUGH_EVIDENCE")
+            return LLMFallbackLabelResult(
+                label_name=None,
+                confidence=best_confidence,
+                signals=signals,
+            )
         return LLMFallbackLabelResult(
-            label_name=label_name,
-            confidence=confidence,
-            signals=signals,
+            label_name=best_label,
+            confidence=best_confidence,
+            signals=best_signals,
         )
 
     def _load_fallback_candidates(self) -> list[LabelFallbackCandidate]:
