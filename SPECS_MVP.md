@@ -482,6 +482,8 @@ Notes:
   - Determine unlabeled = no label assignment OR status=NO_MATCH and no override
   - Requires OCR text
   - Candidates = labels where `llm` is non-empty (after strip)
+  - Score candidates independently (one LLM call per label) and choose highest confidence
+  - If highest confidence < min threshold, abstain
   - Store LLM label classification (label_name or null) with confidence + signals
 
 ### 9.5 Storage changes (SQLite)
