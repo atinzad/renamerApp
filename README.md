@@ -42,7 +42,8 @@ Optional (LLM fallback):
 Increment 6 (Field Extraction):
 - Set `LLM_PROVIDER=openai`
 - Set `OPENAI_API_KEY=...`
-- Run OCR, then click **Extract fields** in the Job actions.
+- In Labels view, generate schema + instructions from examples or edit them directly
+- Run OCR, then click **Extract fields** in the Job actions or per-file controls.
 
 ## Authentication (OAuth)
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
@@ -69,7 +70,7 @@ OAUTH_CLIENT_ID=...
 OAUTH_CLIENT_SECRET=...
 FOLDER_ID=...
 GOOGLE_DRIVE_ACCESS_TOKEN=...   # optional fallback
-SQLITE_PATH=./app.db            # optional override
+TEST_SQLITE_PATH=./app.db       # optional override for scripts
 LLM_PROVIDER=openai             # optional (LLM fallback)
 OPENAI_API_KEY=...              # optional (LLM fallback)
 OPENAI_MODEL=...                # optional (LLM fallback)
@@ -86,8 +87,8 @@ OCR_LANG=ara+eng
 ```
 
 ### Local labels
-Labels are stored in `labels.json` (gitignored). Each label keeps OCR text examples
-from files you classify or create labels for.
+Labels are stored in SQLite (`app.db`, gitignored). Each label keeps OCR text examples
+from files you add via **Add as label example** or when creating a new label.
 
 ### Manual OAuth code flow (no localhost callback)
 If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM):
@@ -104,16 +105,16 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
 6) For each file:
    - Use **Create new label** to add a label (stores OCR example).
    - Or pick a label in **Classify** dropdown.
+   - (Optional) **Add as label example** to attach OCR to a label.
 7) Click **Classify files** to auto-assign labels using OCR text similarity.
 8) (Optional) Click **Classify fallback labels (LLM)** to suggest labels for NO_MATCH files.
-8) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
-9) Click **Preview** to see the rename plan.
-10) Click **Apply Rename** to rename files in Drive.
-11) Click **Undo Rename** to revert the last rename batch.
-12) Click **Preview Report** to generate the report text.
-13) Click **Write Report to Folder** to upload the report.
-
-Note: extraction fields remain placeholders (`<<<PENDING_EXTRACTION>>>`) until later increments.
+9) Click **Extract fields** (job-level or per-file) to populate extracted fields.
+10) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
+11) Click **Preview** to see the rename plan.
+12) Click **Apply Rename** to rename files in Drive.
+13) Click **Undo Rename** to revert the last rename batch.
+14) Click **Preview Report** to generate the report text.
+15) Click **Write Report to Folder** to upload the report.
 
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.
@@ -132,9 +133,21 @@ Run the Increment 5 LLM fallback check (Drive + OCR + LLM suggestion storage):
 ```bash
 env PYTHONPATH=src uv run python scripts/verify_increment5.py
 ```
+Run the Increment 6 extraction check (Drive + OCR + extraction storage):
+```bash
+env PYTHONPATH=src uv run python scripts/verify_increment6.py
+```
+Score LLM fallback per label (single-candidate scoring):
+```bash
+env PYTHONPATH=src uv run python scripts/score_labels_llm.py --ocr ocr_text.txt --sqlite ./app.db
+```
+Classify a local OCR text file (rule-based + LLM fallback):
+```bash
+env PYTHONPATH=src uv run python scripts/classify_ocr_text.py --ocr ocr_text.txt --sqlite ./app.db
+```
 
 ## Notes
-- Labels are local and stored in `labels.json` (gitignored).
+- Labels are local and stored in SQLite (`app.db`, gitignored).
 - LLM fallback suggestions are optional and do not override labels.
-- Field extraction is not implemented yet; classification uses OCR text similarity.
+- Field extraction is implemented and stored per file.
 - The Drive adapter skips `text/plain` files when listing a folder.

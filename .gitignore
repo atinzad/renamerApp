@@ -4,6 +4,7 @@ AGENTS.md
 HANDOFF.md
 labels.json
 app.db
+ocr_text.txt
 
 # OS/editor
 .DS_Store
