@@ -1111,8 +1111,15 @@ def main() -> None:
                 elif not status.get("has_tokens"):
                     badges.append("NO TOKENS")
             badge_text = f" [{' | '.join(badges)}]" if badges else ""
-            with st.expander(f"**{file_ref.name}**{badge_text}", expanded=False):
-                st.caption(f"{file_ref.file_id}")
+            expander_key = f"file_expander_{file_ref.file_id}"
+            st.markdown(f"**{file_ref.name}**{badge_text}")
+            st.caption(f"{file_ref.file_id}")
+            expanded = st.toggle(
+                "Show details",
+                value=st.session_state.get(expander_key, False),
+                key=expander_key,
+            )
+            if expanded:
                 selection_key = f"label_select_{file_ref.file_id}"
                 label_options = ["(Clear)"] + label_names
                 current_label = current_selections.get(file_ref.file_id)
