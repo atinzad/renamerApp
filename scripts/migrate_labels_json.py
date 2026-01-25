@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from dotenv import load_dotenv
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_REPO_ROOT / ".env", override=False)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate labels.json into SQLite labels")

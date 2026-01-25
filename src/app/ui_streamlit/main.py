@@ -17,11 +17,15 @@ import keyring
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from dotenv import load_dotenv
 
 _SRC_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _SRC_ROOT.parent
 if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
+
+# Load repo .env so settings/env-based features work without manual exports.
+load_dotenv(_REPO_ROOT / ".env", override=False)
 
 from app.container import build_services
 from app.domain.label_fallback import list_fallback_candidates, normalize_labels_llm

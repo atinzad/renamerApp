@@ -5,27 +5,12 @@ import sqlite3
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_REPO_ROOT / ".env", override=False)
+
 from app.container import build_services
-
-
-def _load_env(env_path: str = ".env") -> None:
-    path = Path(env_path)
-    if not path.exists():
-        return
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
 
 
 def _get_updated_at(sqlite_path: str, job_id: str, file_id: str) -> str | None:
@@ -47,7 +32,6 @@ def _get_updated_at(sqlite_path: str, job_id: str, file_id: str) -> str | None:
 
 
 def main() -> None:
-    _load_env()
     access_token = os.getenv("GOOGLE_DRIVE_ACCESS_TOKEN")
     folder_id = os.getenv("FOLDER_ID")
     sqlite_path = os.getenv("TEST_SQLITE_PATH", "./app.db")

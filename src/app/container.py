@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from app.adapters.embeddings_dummy import DummyEmbeddingsAdapter
+from app.adapters.embeddings_openai import OpenAIEmbeddingsAdapter
+from app.adapters.embeddings_sentence_transformers import SentenceTransformersEmbeddingsAdapter
 from app.adapters.google_drive_adapter import GoogleDriveAdapter
 from app.adapters.llm_mock import MockLLMAdapter
 from app.adapters.llm_openai import OpenAILLMAdapter
 from app.adapters.ocr_tesseract_adapter import TesseractOCRAdapter
 from app.adapters.sqlite_storage import SQLiteStorage
 from app.settings import (
+    EMBEDDINGS_DEVICE,
     EMBEDDINGS_ENABLED,
+    EMBEDDINGS_LOCAL_MODEL,
+    EMBEDDINGS_MODEL,
+    EMBEDDINGS_PROVIDER,
     LLM_LABEL_MIN_CONFIDENCE,
     LLM_PROVIDER,
     OPENAI_API_KEY,
@@ -32,7 +38,20 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
     drive = GoogleDriveAdapter(access_token)
     ocr = TesseractOCRAdapter()
     embeddings = DummyEmbeddingsAdapter()
-    if EMBEDDINGS_ENABLED:
+    if EMBEDDINGS_PROVIDER == "openai":
+        embeddings = OpenAIEmbeddingsAdapter(
+            api_key=OPENAI_API_KEY,
+            model=EMBEDDINGS_MODEL,
+            base_url=OPENAI_BASE_URL,
+        )
+    elif EMBEDDINGS_PROVIDER in {"local", "sentence-transformers", "bge-m3"}:
+        embeddings = SentenceTransformersEmbeddingsAdapter(
+            model_name=EMBEDDINGS_LOCAL_MODEL,
+            device=EMBEDDINGS_DEVICE,
+        )
+    elif EMBEDDINGS_PROVIDER in {"dummy", "none"}:
+        embeddings = DummyEmbeddingsAdapter()
+    elif EMBEDDINGS_ENABLED:
         embeddings = DummyEmbeddingsAdapter()
     llm = MockLLMAdapter()
     if LLM_PROVIDER.lower() == "openai" and OPENAI_API_KEY:

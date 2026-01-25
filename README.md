@@ -76,6 +76,10 @@ LLM_PROVIDER=openai             # optional (LLM fallback)
 OPENAI_API_KEY=...              # optional (LLM fallback)
 OPENAI_MODEL=...                # optional (LLM fallback)
 LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
+EMBEDDINGS_PROVIDER=openai      # openai | local | sentence-transformers | bge-m3 | dummy
+EMBEDDINGS_MODEL=text-embedding-3-large # OpenAI embeddings model
+EMBEDDINGS_LOCAL_MODEL=BAAI/bge-m3      # local sentence-transformers model
+EMBEDDINGS_DEVICE=cpu           # cpu | cuda
 ```
 The `.env` file is ignored by git.
 
@@ -154,3 +158,4 @@ env PYTHONPATH=src uv run python scripts/classify_ocr_text.py --ocr ocr_text.txt
 - LLM fallback suggestions are optional and do not override labels.
 - Field extraction is implemented and stored per file.
 - The Drive adapter skips `text/plain` files when listing a folder.
+- Local embeddings require `sentence-transformers` (install with your dependency manager).

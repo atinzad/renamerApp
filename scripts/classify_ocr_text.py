@@ -2,33 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
+from dotenv import load_dotenv
 
-def _load_env(env_path: str = ".env") -> None:
-    path = Path(env_path)
-    if not path.exists():
-        return
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
-
-
-_load_env()
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_REPO_ROOT / ".env", override=False)
 
 from app.adapters.embeddings_dummy import DummyEmbeddingsAdapter
 from app.adapters.llm_mock import MockLLMAdapter

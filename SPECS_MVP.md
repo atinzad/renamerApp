@@ -411,7 +411,7 @@ Notes:
     - Else -> NO_MATCH
     - If multiple labels exceed threshold and (best - second_best) < AMBIGUITY_MARGIN -> AMBIGUOUS
   - Defaults (configurable in settings):
-    - MATCH_THRESHOLD = 0.82
+    - MATCH_THRESHOLD = 0.6
     - AMBIGUITY_MARGIN = 0.02
 - If embeddings not available:
   - Lexical scoring fallback:
