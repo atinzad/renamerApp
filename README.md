@@ -2,8 +2,9 @@
 
 Rename files in a Google Drive folder with a Streamlit UI. Preview changes, apply
 renames, undo the last rename, run OCR (images + PDFs), classify files with local
-labels, generate/upload a per-file report, and optionally get LLM fallback label
-suggestions for unmatched files.
+labels stored in SQLite, generate/upload a per-file report, and optionally get LLM
+fallback label suggestions for unmatched files. Labels also support per-label
+extraction schema + instructions and LLM-backed field extraction (Increment 6).
 
 ## Project Layout
 - `src/app/domain/` — dataclasses and pure rename logic
@@ -88,7 +89,8 @@ OCR_LANG=ara+eng
 
 ### Local labels
 Labels are stored in SQLite (`app.db`, gitignored). Each label keeps OCR text examples
-from files you add via **Add as label example** or when creating a new label.
+from files you add via **Add as label example** or when creating a new label. Manage
+labels and examples in the **Labels** view inside the Streamlit app.
 
 ### Manual OAuth code flow (no localhost callback)
 If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM):
@@ -108,13 +110,14 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
    - (Optional) **Add as label example** to attach OCR to a label.
 7) Click **Classify files** to auto-assign labels using OCR text similarity.
 8) (Optional) Click **Classify fallback labels (LLM)** to suggest labels for NO_MATCH files.
-9) Click **Extract fields** (job-level or per-file) to populate extracted fields.
-10) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
-11) Click **Preview** to see the rename plan.
-12) Click **Apply Rename** to rename files in Drive.
-13) Click **Undo Rename** to revert the last rename batch.
-14) Click **Preview Report** to generate the report text.
-15) Click **Write Report to Folder** to upload the report.
+9) In **Labels**, edit schema + instructions or generate them from OCR examples.
+10) Click **Extract fields** (job-level or per-file) to populate extracted fields.
+11) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
+12) Click **Preview** to see the rename plan.
+13) Click **Apply Rename** to rename files in Drive.
+14) Click **Undo Rename** to revert the last rename batch.
+15) Click **Preview Report** to generate the report text.
+16) Click **Write Report to Folder** to upload the report.
 
 ## Development Notes
 - If you do not have `uv` installed, see https://github.com/astral-sh/uv.

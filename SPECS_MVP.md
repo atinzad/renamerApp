@@ -134,7 +134,7 @@ repo/
 - Increment 1: Manual rename + undo (Drive) + OAuth-based access token flow
 - Increment 2: Per-file REPORT.txt generation (file list + extracted-content placeholders) + upload
 - Increment 3: OCR for job files (and later example files)
-- Increment 4: User-defined labels (“training”) + similarity-based classification
+- Increment 4: User-defined labels (“training”) + similarity-based classification (SQLite-backed)
 - Increment 5: LLM label-name fallback (suggestion layer when no label match)
 - Increment 6: Field extraction for reporting and decision support
 - Increment 7: Report filled using consolidated fields + label inventory (rename remains manual/label-based)
@@ -377,7 +377,7 @@ Notes:
 ## 8. INCREMENT 4 SPEC — User Labels (“Training”) + Similarity-Based Classification
 ### 8.1 Scope (MUST implement)
 - User can create labels inline per job file
-- Labels are stored in a local `labels.json` file (gitignored)
+- Labels are stored in SQLite (local `app.db`, gitignored)
 - Each label stores OCR text examples from files assigned to that label
 - Classify job files by matching OCR text against label examples (lexical similarity)
 - Store per-file classification results in UI state (label name, score, status)
@@ -421,7 +421,7 @@ Notes:
   - Still return MATCHED/NO_MATCH/AMBIGUOUS
 
 ### 8.6 Services requirements
-- Classification uses OCR text + label examples from `labels.json`
+- Classification uses OCR text + label examples stored in SQLite
 - Embeddings-based classification and label storage services remain optional for later increments
 
 ### 8.7 Storage changes (SQLite)
@@ -440,22 +440,22 @@ Notes:
   - file_label_overrides(job_id TEXT, file_id TEXT, label_id TEXT, updated_at TEXT)
 
 ### 8.8 UI requirements
-- Single Job screen (no separate Labels page)
-- Per file:
-  - “Create new label” input + button (adds OCR example to `labels.json`)
-  - “Classify” dropdown sourced from `labels.json`
+- Job screen:
+  - Per file: “Create new label” input + button (adds OCR example to SQLite)
+  - Per file: “Classify” dropdown sourced from stored labels
   - Rename field auto-fills with label name + numbering + extension
-- Button: “Classify files” (runs lexical similarity over OCR text)
+  - Button: “Classify files” (runs lexical similarity over OCR text)
+- Labels view (in the same Streamlit app):
+  - View existing labels and examples
+  - Add/delete label examples
 
 ### 8.9 Acceptance criteria
 - User can create labels from job files and persist them in `labels.json`
 - Classification assigns labels deterministically using OCR text similarity
 - Rename field auto-fills from label name when classification succeeds
 
-### 8.10 Label presets (temporary)
-- Labels are stored in `labels.json` in the repo root (gitignored)
-- Each label stores OCR text examples
-- This file is a temporary mechanism until LLM-based extraction is introduced
+### 8.10 Label storage (current)
+- Labels and examples are stored in SQLite (`app.db`, gitignored)
 
 ### 8.11 Deferred schema configuration
 - extraction_schema and naming_template collection is deferred to a later increment
