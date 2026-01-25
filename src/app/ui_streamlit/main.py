@@ -967,17 +967,24 @@ def main() -> None:
                         labels_data, _, _ = _load_labels_from_storage(services["storage"])
                     except Exception:
                         labels_data = _load_labels_json_readonly()
+                    has_labels = bool(labels_data)
+                    has_examples = any(label.get("examples") for label in labels_data)
+                    missing_ocr_count = 0
+                    tokenless_count = 0
                     for file_ref in st.session_state.get("files", []):
                         ocr_result = services["storage"].get_ocr_result(
                             job_id, file_ref.file_id
                         )
                         if ocr_result is None or not ocr_result.text.strip():
+                            missing_ocr_count += 1
                             results[file_ref.file_id] = {
                                 "label": None,
                                 "score": 0.0,
                                 "status": NO_MATCH,
                             }
                             continue
+                        if not normalize_text_to_tokens(ocr_result.text):
+                            tokenless_count += 1
                         label, score, status = _classify_with_labels(
                             labels_data, ocr_result.text
                         )
@@ -1003,6 +1010,27 @@ def main() -> None:
                         rename_key = f"edit_{file_id}"
                         if current_selections.get(file_id):
                             st.session_state[rename_key] = suggested
+                    if not has_labels:
+                        st.warning(
+                            "No labels found. Create labels and add examples in the Labels view "
+                            "to enable rule-based classification."
+                        )
+                    elif not has_examples:
+                        st.warning(
+                            "Labels exist but no examples were found. Add OCR examples to labels "
+                            "so similarity scores are meaningful."
+                        )
+                    if missing_ocr_count:
+                        st.warning(
+                            f"{missing_ocr_count} file(s) have no OCR text. Run OCR first to "
+                            "enable classification."
+                        )
+                    if tokenless_count:
+                        st.warning(
+                            f"{tokenless_count} file(s) produced no usable tokens. This can happen "
+                            "if OCR text is empty or only contains punctuation. Arabic text is "
+                            "now supported, so re-run OCR if needed."
+                        )
                     st.success("Classification completed.")
                 except Exception as exc:
                     st.error(f"Classification failed: {exc}")
@@ -1047,10 +1075,12 @@ def main() -> None:
     classification_results = st.session_state.get("classification_results", {})
     llm_classifications: dict[str, tuple[str | None, float, list[str]]] = {}
     llm_overrides: dict[str, str] = {}
+    storage = None
     if job_id:
         try:
             token = _ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
+            storage = services["storage"]
             llm_classifications = services["storage"].list_llm_label_classifications(job_id)
             llm_overrides = services["storage"].list_llm_label_overrides(job_id)
         except Exception as exc:
@@ -1060,8 +1090,28 @@ def main() -> None:
         if using_json_fallback and labels_data:
             st.info("Labels loaded from labels.json. Run the migration to use SQLite.")
         current_selections = dict(label_selections)
+        ocr_status: dict[str, dict[str, bool]] = {}
+        if storage and job_id:
+            for file_ref in files:
+                ocr_result = storage.get_ocr_result(job_id, file_ref.file_id)
+                has_ocr = bool(ocr_result and ocr_result.text.strip())
+                has_tokens = bool(
+                    normalize_text_to_tokens(ocr_result.text) if has_ocr else False
+                )
+                ocr_status[file_ref.file_id] = {
+                    "has_ocr": has_ocr,
+                    "has_tokens": has_tokens,
+                }
         for file_ref in files:
-            with st.expander(f"**{file_ref.name}**", expanded=True):
+            badges: list[str] = []
+            status = ocr_status.get(file_ref.file_id)
+            if status:
+                if not status.get("has_ocr"):
+                    badges.append("NO OCR")
+                elif not status.get("has_tokens"):
+                    badges.append("NO TOKENS")
+            badge_text = f" [{' | '.join(badges)}]" if badges else ""
+            with st.expander(f"**{file_ref.name}**{badge_text}", expanded=False):
                 st.caption(f"{file_ref.file_id}")
                 selection_key = f"label_select_{file_ref.file_id}"
                 label_options = ["(Clear)"] + label_names

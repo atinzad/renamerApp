@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import math
-import re
 
 
 def normalize_text_to_tokens(text: str) -> set[str]:
-    cleaned = re.sub(r"[^a-zA-Z0-9]+", " ", text.lower())
+    normalized_chars: list[str] = []
+    for char in text.lower():
+        if char.isalnum():
+            normalized_chars.append(char)
+        else:
+            normalized_chars.append(" ")
+    cleaned = "".join(normalized_chars)
     tokens = {token for token in cleaned.split() if len(token) >= 2}
     return tokens
 
