@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,12 +9,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_REPO_ROOT / ".env", override=False)
 
 from app.container import build_services
-from app.domain.label_fallback import LabelFallbackCandidate
 from app.services.llm_fallback_label_service import LLMFallbackLabelService
-
-
-def _write_labels(path: Path, labels: list[dict]) -> None:
-    path.write_text(json.dumps(labels, indent=2, sort_keys=True))
 
 
 def main() -> None:
@@ -49,29 +42,15 @@ def main() -> None:
     if ocr_result is None or not ocr_result.text.strip():
         raise SystemExit("Missing OCR text for the first file.")
 
-    labels = [
-        {
-            "name": "INVOICE",
-            "examples": [],
-            "llm": "Identify invoices, billing statements, or documents with totals and due dates.",
-        },
-        {
-            "name": "CIVIL_ID",
-            "examples": [],
-            "llm": "Identify civil identification documents or national ID cards.",
-        },
-    ]
-    with tempfile.TemporaryDirectory() as temp_dir:
-        labels_path = Path(temp_dir) / "labels.json"
-        _write_labels(labels_path, labels)
-        service = LLMFallbackLabelService(storage, llm, labels_path=labels_path)
-        service.classify_unlabeled_files(job.job_id)
+    service = LLMFallbackLabelService(storage, llm)
+    service.classify_unlabeled_files(job.job_id)
 
     stored = storage.get_llm_label_classification(job.job_id, first.file_id)
     if stored is None:
         raise SystemExit("No LLM fallback classification stored.")
     label_name, confidence, signals = stored
-    allowlist = {candidate.name for candidate in _candidates(labels)}
+    labels = storage.list_labels(include_inactive=False)
+    allowlist = {label.name for label in labels if label.llm}
     if label_name is not None and label_name not in allowlist:
         raise SystemExit("Stored label_name not in candidate allowlist.")
 
@@ -81,13 +60,6 @@ def main() -> None:
     print(f"label_name={label_name}")
     print(f"confidence={confidence:.3f}")
     print(f"signals={signals}")
-
-
-def _candidates(labels: list[dict]) -> list[LabelFallbackCandidate]:
-    return [
-        LabelFallbackCandidate(name=label["name"], instructions=label["llm"])
-        for label in labels
-    ]
 
 
 if __name__ == "__main__":

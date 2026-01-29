@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.domain.label_fallback import (
     LabelFallbackCandidate,
@@ -28,11 +27,9 @@ class LLMFallbackLabelService:
         self,
         storage: StoragePort,
         llm: LLMPort,
-        labels_path: Path | None = None,
     ) -> None:
         self._storage = storage
         self._llm = llm
-        self._labels_path = labels_path or self._default_labels_path()
 
     def classify_unlabeled_files(self, job_id: str) -> None:
         candidates = self._load_fallback_candidates()
@@ -122,63 +119,39 @@ class LLMFallbackLabelService:
     def _classify_file(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
     ) -> LLMFallbackLabelResult:
-        best_label = None
-        best_confidence = 0.0
-        best_signals: list[str] = []
-        any_success = False
-        for candidate in candidates:
-            try:
-                classification = self._llm.classify_label(ocr_text, [candidate])
-                any_success = True
-                confidence = float(classification.confidence)
-                label_name = classification.label_name
-                signals = list(classification.signals or [])
-            except Exception:
-                continue
-            if label_name is None:
-                continue
-            if confidence > best_confidence:
-                best_confidence = confidence
-                best_label = label_name
-                best_signals = signals
-        if not any_success:
+        try:
+            classification = self._llm.classify_label(ocr_text, candidates)
+            confidence = float(classification.confidence)
+            label_name = classification.label_name
+            signals = list(classification.signals or [])
+        except Exception:
             return LLMFallbackLabelResult(
                 label_name=None,
                 confidence=0.0,
                 signals=["LLM_CLASSIFICATION_FAILED"],
             )
-        if best_confidence < LLM_LABEL_MIN_CONFIDENCE or best_label is None:
-            signals = list(best_signals)
+        if label_name is None or confidence < LLM_LABEL_MIN_CONFIDENCE:
             if "BELOW_MIN_CONFIDENCE" not in signals:
                 signals.append("BELOW_MIN_CONFIDENCE")
             if "ABSTAIN_NOT_ENOUGH_EVIDENCE" not in signals:
                 signals.append("ABSTAIN_NOT_ENOUGH_EVIDENCE")
             return LLMFallbackLabelResult(
                 label_name=None,
-                confidence=best_confidence,
+                confidence=confidence,
                 signals=signals,
             )
         return LLMFallbackLabelResult(
-            label_name=best_label,
-            confidence=best_confidence,
-            signals=best_signals,
+            label_name=label_name,
+            confidence=confidence,
+            signals=signals,
         )
 
     def _load_fallback_candidates(self) -> list[LabelFallbackCandidate]:
-        labels = self._load_labels_json()
-        labels = normalize_labels_llm(labels)
-        return list_fallback_candidates(labels)
-
-    def _load_labels_json(self) -> list[dict]:
-        if not self._labels_path.exists():
-            return []
-        try:
-            data = json.loads(self._labels_path.read_text())
-        except json.JSONDecodeError:
-            return []
-        return data if isinstance(data, list) else []
-
-    @staticmethod
-    def _default_labels_path() -> Path:
-        src_root = Path(__file__).resolve().parents[2]
-        return src_root.parent / "labels.json"
+        labels = self._storage.list_labels(include_inactive=False)
+        label_dicts = [
+            {"name": label.name, "llm": label.llm}
+            for label in labels
+            if label.llm and label.name
+        ]
+        label_dicts = normalize_labels_llm(label_dicts)
+        return list_fallback_candidates(label_dicts)

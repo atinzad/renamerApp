@@ -16,4 +16,5 @@ dependencies = [
     "sentence-transformers>=2.7.0",
     "streamlit[pdf]>=1.30.0",
     "python-dotenv>=1.0.1",
+    "pdfminer-six>=20260107",
 ]

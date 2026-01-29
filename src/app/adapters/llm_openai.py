@@ -35,28 +35,16 @@ class OpenAILLMAdapter(LLMPort):
                 signals=["ABSTAIN_NOT_ENOUGH_EVIDENCE"],
             )
         messages = self._build_messages(ocr_text, candidates)
-        response = requests.post(
-            f"{self._base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self._model,
-                "messages": messages,
-                "temperature": 0.0,
-                "max_tokens": 400,
-            },
-            timeout=30,
+        payload = self._post_response(
+            messages,
+            response_format={"type": "json_object"},
+            max_tokens=400,
         )
-        response.raise_for_status()
-        payload = response.json()
-        content = (
-            payload.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        if payload is None:
+            return LabelFallbackClassification(
+                label_name=None, confidence=0.0, signals=["LLM_REQUEST_FAILED"]
+            )
+        content = self._extract_output_text(payload)
         return self._parse_response(content, candidates)
 
     def extract_fields(
@@ -87,25 +75,22 @@ class OpenAILLMAdapter(LLMPort):
                 ),
             },
         ]
-        response = self._post_completion(
+        response = self._post_response(
             messages,
             response_format={
                 "type": "json_schema",
-                "json_schema": {
-                    "name": "extracted_fields",
-                    "schema": json_schema,
-                    "strict": True,
-                },
+                "name": "extracted_fields",
+                "schema": json_schema,
+                "strict": True,
             },
+            max_tokens=800,
         )
-        if response is None:
-            parsed = {}
-        else:
-            parsed = self._parse_fields_response(response)
+        parsed = self._parse_fields_response(response) if response else {}
         if not parsed:
-            response = self._post_completion(
+            response = self._post_response(
                 messages,
                 response_format={"type": "json_object"},
+                max_tokens=800,
             )
             if response is None:
                 return {}
@@ -211,22 +196,26 @@ class OpenAILLMAdapter(LLMPort):
             "additionalProperties": False,
         }
 
-    def _post_completion(
-        self, messages: list[dict[str, str]], response_format: dict
+    def _post_response(
+        self,
+        messages: list[dict[str, str]],
+        response_format: dict,
+        max_tokens: int,
     ) -> dict | None:
+        input_items = self._to_response_input(messages)
         try:
             response = requests.post(
-                f"{self._base_url}/chat/completions",
+                f"{self._base_url}/responses",
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
                     "model": self._model,
-                    "messages": messages,
-                    "response_format": response_format,
+                    "input": input_items,
+                    "text": {"format": response_format},
                     "temperature": 0.0,
-                    "max_tokens": 800,
+                    "max_tokens": max_tokens,
                 },
                 timeout=30,
             )
@@ -236,16 +225,10 @@ class OpenAILLMAdapter(LLMPort):
         return response.json()
 
     @staticmethod
-    def _parse_fields_response(payload: dict) -> dict:
-        content = (
-            payload.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+    def _parse_fields_response(self, payload: dict) -> dict:
+        content = self._extract_output_text(payload)
+        data = self._parse_json_from_text(content)
+        if data is None:
             return {}
         if isinstance(data, dict):
             fields = data.get("fields")
@@ -253,3 +236,55 @@ class OpenAILLMAdapter(LLMPort):
                 return fields
             return data
         return {}
+
+    @staticmethod
+    def _extract_output_text(payload: dict) -> str:
+        direct_text = payload.get("output_text")
+        if isinstance(direct_text, str) and direct_text.strip():
+            return direct_text.strip()
+        output_items = payload.get("output", [])
+        for item in output_items:
+            content = item.get("content", [])
+            for block in content:
+                if block.get("type") == "output_text":
+                    return (block.get("text") or "").strip()
+                if block.get("type") == "text":
+                    return (block.get("text") or "").strip()
+                if block.get("type") == "output_json":
+                    json_payload = block.get("json")
+                    if json_payload is None:
+                        continue
+                    return json.dumps(json_payload)
+        return ""
+
+    @staticmethod
+    def _parse_json_from_text(text: str) -> dict | None:
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return None
+            try:
+                data = json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _to_response_input(messages: list[dict[str, str]]) -> list[dict]:
+        converted = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content", "")
+            if isinstance(content, str):
+                content_items = [{"type": "input_text", "text": content}]
+            elif isinstance(content, list):
+                content_items = content
+            else:
+                content_items = [{"type": "input_text", "text": str(content)}]
+            converted.append({"role": role, "content": content_items})
+        return converted
