@@ -2,9 +2,9 @@
 
 Rename files in a Google Drive folder with a Streamlit UI. Preview changes, apply
 renames, undo the last rename, run OCR (images + PDFs), classify files with local
-labels stored in SQLite, generate/upload a per-file report, and optionally get LLM
-fallback label suggestions for unmatched files. Labels also support per-label
-extraction schema + instructions and LLM-backed field extraction (Increment 6).
+labels stored in SQLite, generate/upload a per-file report, and auto-run LLM
+fallback classification when similarity is below threshold. Labels also support
+per-label extraction schema + instructions and LLM-backed field extraction (Increment 6).
 
 ## Project Layout
 - `src/app/domain/` — dataclasses and pure rename logic
@@ -76,6 +76,9 @@ LLM_PROVIDER=openai             # optional (LLM fallback)
 OPENAI_API_KEY=...              # optional (LLM fallback)
 OPENAI_MODEL=...                # optional (LLM fallback)
 LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
+MATCH_THRESHOLD=0.6             # embeddings similarity threshold
+LEXICAL_MATCH_THRESHOLD=0.35    # token similarity threshold
+AMBIGUITY_MARGIN=0.02           # margin to avoid ambiguous matches
 EMBEDDINGS_PROVIDER=openai      # openai | local | sentence-transformers | bge-m3 | dummy
 EMBEDDINGS_MODEL=text-embedding-3-large # OpenAI embeddings model
 EMBEDDINGS_LOCAL_MODEL=BAAI/bge-m3      # local sentence-transformers model
@@ -90,6 +93,19 @@ Examples:
 OCR_LANG=eng
 OCR_LANG=ara+eng
 ```
+For PDFs, the app will attempt to use a text layer (via `pdfminer.six`) before
+rasterizing pages for OCR. For scans/photos, OCR runs two passes (raw + preprocessed)
+and merges the text for downstream LLM extraction.
+
+### Classification thresholds
+Classification uses embeddings when available, otherwise lexical token overlap.
+Tune these in `.env`:
+- `MATCH_THRESHOLD` — embeddings similarity required for MATCHED
+- `LEXICAL_MATCH_THRESHOLD` — token overlap required for MATCHED
+- `AMBIGUITY_MARGIN` — minimum gap between top-2 scores to avoid ambiguous matches
+
+If a file is below threshold, the LLM fallback runs (when configured) and stores
+its suggestion alongside the rule-based result.
 
 ### Local labels
 Labels are stored in SQLite (`app.db`, gitignored). Each label keeps OCR text examples
@@ -112,8 +128,8 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
    - Use **Create new label** to add a label (stores OCR example).
    - Or pick a label in **Classify** dropdown.
    - (Optional) **Add as label example** to attach OCR to a label.
-7) Click **Classify files** to auto-assign labels using OCR text similarity.
-8) (Optional) Click **Classify fallback labels (LLM)** to suggest labels for NO_MATCH files.
+7) Click **Classify files** to auto-assign labels using OCR similarity.
+   - If similarity is below threshold, LLM fallback runs automatically (if configured).
 9) In **Labels**, edit schema + instructions or generate them from OCR examples.
 10) Click **Extract fields** (job-level or per-file) to populate extracted fields.
 11) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
@@ -151,6 +167,18 @@ env PYTHONPATH=src uv run python scripts/score_labels_llm.py --ocr ocr_text.txt 
 Classify a local OCR text file (rule-based + LLM fallback):
 ```bash
 env PYTHONPATH=src uv run python scripts/classify_ocr_text.py --ocr ocr_text.txt --sqlite ./app.db
+```
+Compare PDF OCR strategies (text layer, raw, preprocessed, merged):
+```bash
+env PYTHONPATH=src uv run python scripts/compare_pdf_ocr.py civ_id_example.pdf
+```
+Compare OCR strategies vs direct-image extraction (speed + usage):
+```bash
+env PYTHONPATH=src OCR_LANG=ara+eng uv run python scripts/compare_ocr_llm_extraction.py civ_id_example.pdf --label Civil_ID
+```
+Compare LLM fallback strategies (single-call vs per-label):
+```bash
+env PYTHONPATH=src uv run python scripts/compare_llm_fallback_strategies.py --ocr ocr_text.txt --db app.db
 ```
 
 ## Notes
