@@ -64,11 +64,14 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
     storage = SQLiteStorage(sqlite_path)
     presets_service = PresetsService(storage)
     presets_service.seed_if_empty()
+    llm_fallback_label_service = LLMFallbackLabelService(storage, llm)
     return {
         "jobs_service": JobsService(drive, storage),
-        "label_classification_service": LabelClassificationService(embeddings, storage),
+        "label_classification_service": LabelClassificationService(
+            embeddings, storage, llm_fallback_label_service
+        ),
         "label_service": LabelService(drive, ocr, embeddings, storage),
-        "llm_fallback_label_service": LLMFallbackLabelService(storage, llm),
+        "llm_fallback_label_service": llm_fallback_label_service,
         "extraction_service": ExtractionService(llm, storage),
         "schema_builder_service": SchemaBuilderService(storage, llm),
         "ocr_service": OCRService(drive, ocr, storage),

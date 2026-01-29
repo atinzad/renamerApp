@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,13 +35,6 @@ def _build_llm_adapter():
     return MockLLMAdapter()
 
 
-def _write_labels_json(labels: list[dict]) -> Path:
-    temp_dir = Path(tempfile.mkdtemp())
-    path = temp_dir / "labels.json"
-    path.write_text(json.dumps(labels, indent=2, sort_keys=True))
-    return path
-
-
 def main() -> None:
     from app.services.label_classification_service import LabelClassificationService
     from app.services.llm_fallback_label_service import LLMFallbackLabelService
@@ -66,7 +57,9 @@ def main() -> None:
     )
     storage.save_ocr_result(job.job_id, file_id, OCRResult(text=ocr_text, confidence=1.0))
 
-    classifier = LabelClassificationService(DummyEmbeddingsAdapter(), storage)
+    llm = _build_llm_adapter()
+    llm_service = LLMFallbackLabelService(storage, llm)
+    classifier = LabelClassificationService(DummyEmbeddingsAdapter(), storage, llm_service)
     classifier.classify_file(job.job_id, file_id)
     assignment = storage.get_file_label_assignment(job.job_id, file_id)
     label_name = None
@@ -88,19 +81,6 @@ def main() -> None:
         )
     else:
         print(json.dumps({"label_name": None, "score": 0.0, "status": "NO_MATCH"}, indent=2))
-
-    labels = [
-        {"name": label.name, "examples": [], "llm": label.llm or ""}
-        for label in storage.list_labels(include_inactive=False)
-    ]
-    labels_path = _write_labels_json(labels)
-    llm = _build_llm_adapter()
-    llm_service = LLMFallbackLabelService(storage, llm, labels_path=labels_path)
-    try:
-        llm_service.classify_file(job.job_id, file_id)
-    except RuntimeError as exc:
-        print(f"LLM fallback classification skipped: {exc}")
-        return
 
     llm_result = storage.get_llm_label_classification(job.job_id, file_id)
     print("LLM fallback classification:")

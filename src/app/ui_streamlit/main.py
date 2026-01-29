@@ -891,20 +891,18 @@ def main() -> None:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
 
-        report_cols = st.columns(6)
+        report_cols = st.columns(5)
         run_ocr_clicked = report_cols[0].button(
             "Run OCR",
             disabled=job_id is None,
         )
         report_cols[0].caption("Required before classification.")
         classify_clicked = report_cols[1].button("Classify files")
-        report_cols[1].caption("Rule-based label match.")
-        fallback_clicked = report_cols[2].button("Classify fallback labels (LLM)")
-        report_cols[2].caption("Suggests labels for NO_MATCH.")
-        extract_clicked = report_cols[3].button("Extract fields")
-        report_cols[3].caption("LLM-powered field extraction.")
-        preview_report_clicked = report_cols[4].button("Preview Report")
-        write_report_clicked = report_cols[5].button(
+        report_cols[1].caption("Embedding + lexical, with LLM fallback on no-match.")
+        extract_clicked = report_cols[2].button("Extract fields")
+        report_cols[2].caption("LLM-powered field extraction.")
+        preview_report_clicked = report_cols[3].button("Preview Report")
+        write_report_clicked = report_cols[4].button(
             "Write Report to Folder",
             disabled=job_id is None,
         )
@@ -969,6 +967,7 @@ def main() -> None:
                         labels_data = _load_labels_json_readonly()
                     has_labels = bool(labels_data)
                     has_examples = any(label.get("examples") for label in labels_data)
+                    label_id_map = {label.get("label_id"): label.get("name") for label in labels_data}
                     missing_ocr_count = 0
                     tokenless_count = 0
                     for file_ref in st.session_state.get("files", []):
@@ -981,17 +980,26 @@ def main() -> None:
                                 "label": None,
                                 "score": 0.0,
                                 "status": NO_MATCH,
+                                "method": None,
+                                "threshold": None,
+                                "llm_called": False,
+                                "llm_result": None,
                             }
                             continue
                         if not normalize_text_to_tokens(ocr_result.text):
                             tokenless_count += 1
-                        label, score, status = _classify_with_labels(
-                            labels_data, ocr_result.text
+                        details = services["label_classification_service"].classify_file(
+                            job_id, file_ref.file_id
                         )
+                        label_name = label_id_map.get(details.get("label_id"))
                         results[file_ref.file_id] = {
-                            "label": label,
-                            "score": score,
-                            "status": status,
+                            "label": label_name,
+                            "score": details.get("score", 0.0),
+                            "status": details.get("status", NO_MATCH),
+                            "method": details.get("method"),
+                            "threshold": details.get("threshold"),
+                            "llm_called": details.get("llm_called", False),
+                            "llm_result": details.get("llm_result"),
                         }
                     st.session_state["classification_results"] = results
                     current_selections = dict(st.session_state.get("label_selections", {}))
@@ -1034,21 +1042,6 @@ def main() -> None:
                     st.success("Classification completed.")
                 except Exception as exc:
                     st.error(f"Classification failed: {exc}")
-        if fallback_clicked:
-            if not st.session_state.get("ocr_ready"):
-                st.error("Run OCR first.")
-            else:
-                try:
-                    token = _ensure_access_token(access_token, client_id, client_secret)
-                    services = _get_services(token, sqlite_path)
-                    with st.spinner("Classifying fallback labels..."):
-                        services["llm_fallback_label_service"].classify_unlabeled_files(
-                            job_id
-                        )
-                    st.success("Fallback classification completed.")
-                    _trigger_rerun()
-                except Exception as exc:
-                    st.error(f"Fallback classification failed: {exc}")
 
     files = st.session_state.get("files", [])
     edits: dict[str, str] = {}
@@ -1236,6 +1229,16 @@ def main() -> None:
                     status = result["status"]
                     label_name = result["label"] or "—"
                     st.write(f"Rule-based classification: {label_name} ({score_pct})")
+                    method = result.get("method") or "unknown"
+                    threshold = result.get("threshold")
+                    if threshold is not None:
+                        threshold_pct = f"{threshold * 100:.1f}%"
+                        below = "below threshold" if result["score"] < threshold else "meets threshold"
+                        st.caption(
+                            f"Similarity: {score_pct} via {method} (threshold {threshold_pct}, {below})"
+                        )
+                    else:
+                        st.caption(f"Similarity: {score_pct} via {method}")
                     st.caption(f"Status: {status}")
 
                 llm_signals: list[str] = []
@@ -1244,8 +1247,12 @@ def main() -> None:
                     st.write(f"LLM suggestion: {llm_override} (OVERRIDDEN)")
                 else:
                     llm_result = llm_classifications.get(file_ref.file_id)
+                    llm_called = result.get("llm_called") if result else False
                     if llm_result is None:
-                        st.write("LLM suggestion: —")
+                        if llm_called:
+                            st.write("LLM suggestion: — (no result)")
+                        else:
+                            st.write("LLM suggestion: — (not invoked)")
                     else:
                         llm_label, llm_confidence, llm_signals = llm_result
                         if llm_label:
@@ -1338,7 +1345,7 @@ def main() -> None:
 
                 if job_id:
                     with st.container():
-                        col_ocr, col_classify, col_fallback, col_extract = st.columns(4)
+                        col_ocr, col_classify, col_extract = st.columns(3)
                         if col_ocr.button(
                             "Run OCR",
                             key=f"run_ocr_{file_ref.file_id}",
@@ -1366,57 +1373,40 @@ def main() -> None:
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
-                                services["label_classification_service"].classify_file(
+                                details = services["label_classification_service"].classify_file(
                                     job_id, file_ref.file_id
                                 )
-                                assignment = services["storage"].get_file_label_assignment(
-                                    job_id, file_ref.file_id
+                                label_id = details.get("label_id")
+                                status = details.get("status", NO_MATCH)
+                                score = float(details.get("score", 0.0))
+                                label_name = label_name_by_id.get(label_id)
+                                classification_results[file_ref.file_id] = {
+                                    "label": label_name,
+                                    "score": score,
+                                    "status": status,
+                                    "method": details.get("method"),
+                                    "threshold": details.get("threshold"),
+                                    "llm_called": details.get("llm_called", False),
+                                    "llm_result": details.get("llm_result"),
+                                }
+                                st.session_state["classification_results"] = (
+                                    classification_results
                                 )
-                                if assignment:
-                                    label_id = assignment.get("label_id")
-                                    status = assignment.get("status", NO_MATCH)
-                                    score = float(assignment.get("score", 0.0))
-                                    label_name = label_name_by_id.get(label_id)
-                                    classification_results[file_ref.file_id] = {
-                                        "label": label_name,
-                                        "score": score,
-                                        "status": status,
-                                    }
-                                    st.session_state["classification_results"] = (
-                                        classification_results
+                                if status == MATCHED and label_name:
+                                    current_selections[file_ref.file_id] = label_name
+                                    suggestions = _build_suggested_names(
+                                        files, current_selections
                                     )
-                                    if status == MATCHED and label_name:
-                                        current_selections[file_ref.file_id] = label_name
-                                        suggestions = _build_suggested_names(
-                                            files, current_selections
-                                        )
-                                        rename_key = f"edit_{file_ref.file_id}"
-                                        st.session_state[rename_key] = suggestions.get(
-                                            file_ref.file_id, ""
-                                        )
-                                    else:
-                                        current_selections[file_ref.file_id] = None
+                                    rename_key = f"edit_{file_ref.file_id}"
+                                    st.session_state[rename_key] = suggestions.get(
+                                        file_ref.file_id, ""
+                                    )
+                                else:
+                                    current_selections[file_ref.file_id] = None
                                 st.success("Classification completed.")
                                 _trigger_rerun()
                             except Exception as exc:
                                 st.error(f"Classification failed: {exc}")
-                        if col_fallback.button(
-                            "Classify fallback (LLM)",
-                            key=f"fallback_file_{file_ref.file_id}",
-                        ):
-                            try:
-                                token = _ensure_access_token(
-                                    access_token, client_id, client_secret
-                                )
-                                services = _get_services(token, sqlite_path)
-                                with st.spinner("Classifying fallback label..."):
-                                    services[
-                                        "llm_fallback_label_service"
-                                    ].classify_file(job_id, file_ref.file_id)
-                                st.success("Fallback classification completed.")
-                                _trigger_rerun()
-                            except Exception as exc:
-                                st.error(f"Fallback classification failed: {exc}")
                         if col_extract.button(
                             "Extract fields",
                             key=f"extract_file_{file_ref.file_id}",

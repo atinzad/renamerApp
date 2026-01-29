@@ -3,14 +3,21 @@ from __future__ import annotations
 from app.domain.labels import NO_MATCH, decide_match
 from app.domain.similarity import cosine_similarity, jaccard_similarity, normalize_text_to_tokens
 from app.settings import AMBIGUITY_MARGIN, LEXICAL_MATCH_THRESHOLD, MATCH_THRESHOLD
+from app.services.llm_fallback_label_service import LLMFallbackLabelService
 from app.ports.embeddings_port import EmbeddingsPort
 from app.ports.storage_port import StoragePort
 
 
 class LabelClassificationService:
-    def __init__(self, embeddings: EmbeddingsPort, storage: StoragePort) -> None:
+    def __init__(
+        self,
+        embeddings: EmbeddingsPort,
+        storage: StoragePort,
+        llm_fallback: LLMFallbackLabelService | None = None,
+    ) -> None:
         self._embeddings = embeddings
         self._storage = storage
+        self._llm_fallback = llm_fallback
 
     def classify_job_files(self, job_id: str) -> None:
         job_files = self._ordered_job_files(job_id)
@@ -27,12 +34,12 @@ class LabelClassificationService:
                 label_examples,
             )
 
-    def classify_file(self, job_id: str, file_id: str) -> None:
+    def classify_file(self, job_id: str, file_id: str) -> dict:
         labels = self._storage.list_labels(include_inactive=False)
         label_examples = {
             label.label_id: self._storage.list_label_examples(label.label_id) for label in labels
         }
-        self._classify_file(job_id, file_id, labels, label_examples)
+        return self._classify_file(job_id, file_id, labels, label_examples)
 
     def override_file_label(self, job_id: str, file_id: str, label_id: str | None) -> None:
         self._storage.upsert_file_label_override(job_id, file_id, label_id)
@@ -43,10 +50,18 @@ class LabelClassificationService:
         file_id: str,
         labels: list,
         label_examples: dict[str, list],
-    ) -> None:
+    ) -> dict:
         override = self._storage.get_file_label_override(job_id, file_id)
         if override is not None:
-            return
+            return {
+                "label_id": override.get("label_id"),
+                "score": 0.0,
+                "status": "OVERRIDDEN",
+                "method": None,
+                "threshold": None,
+                "llm_called": False,
+                "llm_result": None,
+            }
         ocr_result = self._storage.get_ocr_result(job_id, file_id)
         if ocr_result is None or not ocr_result.text.strip():
             self._storage.upsert_file_label_assignment(
@@ -56,7 +71,15 @@ class LabelClassificationService:
                 score=0.0,
                 status=NO_MATCH,
             )
-            return
+            return {
+                "label_id": None,
+                "score": 0.0,
+                "status": NO_MATCH,
+                "method": None,
+                "threshold": None,
+                "llm_called": False,
+                "llm_result": None,
+            }
 
         ocr_text = ocr_result.text
         embedding: list[float] | None = None
@@ -118,6 +141,26 @@ class LabelClassificationService:
             score=best_score,
             status=status,
         )
+        llm_called = False
+        llm_result = None
+        if status == NO_MATCH and self._llm_fallback is not None:
+            try:
+                self._llm_fallback.classify_file(job_id, file_id)
+                llm_called = True
+                llm_result = self._storage.get_llm_label_classification(job_id, file_id)
+            except Exception:
+                llm_called = True
+                llm_result = None
+        return {
+            "label_id": best_label_id if status != NO_MATCH else None,
+            "score": best_score,
+            "status": status,
+            "method": method,
+            "threshold": threshold,
+            "llm_called": llm_called,
+            "llm_result": llm_result,
+            "rationale": rationale,
+        }
 
     def _ordered_job_files(self, job_id: str):
         job_files = self._storage.get_job_files(job_id)
