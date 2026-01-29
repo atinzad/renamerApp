@@ -79,10 +79,10 @@ LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
 MATCH_THRESHOLD=0.6             # embeddings similarity threshold
 LEXICAL_MATCH_THRESHOLD=0.35    # token similarity threshold
 AMBIGUITY_MARGIN=0.02           # margin to avoid ambiguous matches
-EMBEDDINGS_PROVIDER=openai      # openai | local | sentence-transformers | bge-m3 | dummy
+EMBEDDINGS_PROVIDER=openai      # openai | dummy
 EMBEDDINGS_MODEL=text-embedding-3-large # OpenAI embeddings model
-EMBEDDINGS_LOCAL_MODEL=BAAI/bge-m3      # local sentence-transformers model
-EMBEDDINGS_DEVICE=cpu           # cpu | cuda
+EMBEDDINGS_LOCAL_MODEL=BAAI/bge-m3      # unused (local embeddings removed)
+EMBEDDINGS_DEVICE=cpu           # unused (local embeddings removed)
 ```
 The `.env` file is ignored by git.
 
@@ -186,4 +186,4 @@ env PYTHONPATH=src uv run python scripts/compare_llm_fallback_strategies.py --oc
 - LLM fallback suggestions are optional and do not override labels.
 - Field extraction is implemented and stored per file.
 - The Drive adapter skips `text/plain` files when listing a folder.
-- Local embeddings require `sentence-transformers` (install with your dependency manager).
+- Local embeddings are not included in this repo; use OpenAI embeddings or dummy.
