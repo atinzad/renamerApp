@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 OCR_LANG = os.getenv("OCR_LANG", "ara+eng")
+OCR_WORKERS = int(os.getenv("OCR_WORKERS", "1"))
 EMBEDDINGS_ENABLED = os.getenv("EMBEDDINGS_ENABLED", "false").lower() == "true"
 # Embeddings switching: openai | local | sentence-transformers | bge-m3 | dummy
 EMBEDDINGS_PROVIDER = os.getenv("EMBEDDINGS_PROVIDER", "openai").lower()

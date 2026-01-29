@@ -121,6 +121,7 @@ class LabelClassificationService:
         best_label_id = None
         best_score = 0.0
         second_score = None
+        sorted_scores: list[tuple[str, float]] = []
         if label_scores:
             sorted_scores = sorted(
                 label_scores.items(), key=lambda item: item[1], reverse=True
@@ -160,6 +161,7 @@ class LabelClassificationService:
             "llm_called": llm_called,
             "llm_result": llm_result,
             "rationale": rationale,
+            "candidates": sorted_scores,
         }
 
     def _ordered_job_files(self, job_id: str):

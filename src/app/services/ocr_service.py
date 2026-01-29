@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from app.ports.drive_port import DrivePort
 from app.ports.ocr_port import OCRPort
 from app.ports.storage_port import StoragePort
+from app.settings import OCR_WORKERS
 
 
 class OCRService:
@@ -38,8 +41,41 @@ class OCRService:
             image_rows,
             key=lambda row: (row["sort_index"], row["name"], row["file_id"]),
         )
+        if OCR_WORKERS <= 1 or len(ordered_rows) <= 1:
+            for row in ordered_rows:
+                file_id = row["file_id"]
+                image_bytes = self._drive.download_file_bytes(file_id)
+                result = self._ocr.extract_text(image_bytes)
+                self._storage.save_ocr_result(job_id, file_id, result)
+            return
+
+        payloads: list[tuple[str, bytes]] = []
         for row in ordered_rows:
             file_id = row["file_id"]
             image_bytes = self._drive.download_file_bytes(file_id)
-            result = self._ocr.extract_text(image_bytes)
+            payloads.append((file_id, image_bytes))
+
+        results: dict[str, object] = {}
+        errors: list[tuple[str, Exception]] = []
+        with ThreadPoolExecutor(max_workers=OCR_WORKERS) as executor:
+            future_map = {
+                executor.submit(self._ocr.extract_text, image_bytes): file_id
+                for file_id, image_bytes in payloads
+            }
+            for future in as_completed(future_map):
+                file_id = future_map[future]
+                try:
+                    results[file_id] = future.result()
+                except Exception as exc:
+                    errors.append((file_id, exc))
+
+        if errors:
+            file_id, exc = errors[0]
+            raise RuntimeError(f"OCR failed for file {file_id}") from exc
+
+        for row in ordered_rows:
+            file_id = row["file_id"]
+            result = results.get(file_id)
+            if result is None:
+                continue
             self._storage.save_ocr_result(job_id, file_id, result)

@@ -93,6 +93,11 @@ Examples:
 OCR_LANG=eng
 OCR_LANG=ara+eng
 ```
+Set `OCR_WORKERS` to parallelize OCR per job (default: 1).
+Example:
+```
+OCR_WORKERS=4
+```
 For PDFs, the app will attempt to use a text layer (via `pdfminer.six`) before
 rasterizing pages for OCR. For scans/photos, OCR runs two passes (raw + preprocessed)
 and merges the text for downstream LLM extraction.

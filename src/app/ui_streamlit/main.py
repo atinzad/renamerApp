@@ -1000,6 +1000,7 @@ def main() -> None:
                             "threshold": details.get("threshold"),
                             "llm_called": details.get("llm_called", False),
                             "llm_result": details.get("llm_result"),
+                            "candidates": details.get("candidates", []),
                         }
                     st.session_state["classification_results"] = results
                     current_selections = dict(st.session_state.get("label_selections", {}))
@@ -1227,8 +1228,16 @@ def main() -> None:
                 if result:
                     score_pct = f"{result['score'] * 100:.1f}%"
                     status = result["status"]
-                    label_name = result["label"] or "—"
-                    st.write(f"Rule-based classification: {label_name} ({score_pct})")
+                    candidates = result.get("candidates") or []
+                    best_candidate_name = None
+                    if candidates:
+                        best_candidate_id, _ = candidates[0]
+                        best_candidate_name = label_name_by_id.get(
+                            best_candidate_id, best_candidate_id
+                        )
+                    label_name = result["label"] or best_candidate_name or "—"
+                    suffix = "" if result["label"] else " (best candidate)"
+                    st.write(f"Rule-based classification: {label_name} ({score_pct}){suffix}")
                     method = result.get("method") or "unknown"
                     threshold = result.get("threshold")
                     if threshold is not None:
@@ -1240,6 +1249,18 @@ def main() -> None:
                     else:
                         st.caption(f"Similarity: {score_pct} via {method}")
                     st.caption(f"Status: {status}")
+                    if candidates:
+                        rows = []
+                        for candidate_id, candidate_score in candidates:
+                            candidate_name = label_name_by_id.get(candidate_id, candidate_id)
+                            rows.append(
+                                {
+                                    "Label": candidate_name,
+                                    "Score": f"{candidate_score * 100:.1f}%",
+                                }
+                            )
+                        with st.expander("All candidate scores", expanded=False):
+                            st.table(rows)
 
                 llm_signals: list[str] = []
                 llm_override = llm_overrides.get(file_ref.file_id)
@@ -1388,6 +1409,7 @@ def main() -> None:
                                     "threshold": details.get("threshold"),
                                     "llm_called": details.get("llm_called", False),
                                     "llm_result": details.get("llm_result"),
+                                    "candidates": details.get("candidates", []),
                                 }
                                 st.session_state["classification_results"] = (
                                     classification_results
