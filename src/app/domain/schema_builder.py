@@ -11,8 +11,14 @@ def infer_schema_from_example(example_json: dict) -> dict:
 
 
 def build_instruction_from_example(schema: dict) -> str:
-    _ = schema
-    return 'Extract fields according to this schema. If a field is missing, return "UNKNOWN".'
+    fields = _flatten_schema_fields(schema)
+    if not fields:
+        return 'Extract fields according to this schema. If a field is missing, return "UNKNOWN".'
+    field_list = ", ".join(fields)
+    return (
+        f"Extract the following fields from the OCR text: {field_list}. "
+        "Use \"UNKNOWN\" for any missing fields."
+    )
 
 
 def _infer_schema(value: object) -> dict:
@@ -45,3 +51,22 @@ def _object_schema(properties: dict[str, dict]) -> dict:
         "required": list(properties.keys()),
         "additionalProperties": False,
     }
+
+
+def _flatten_schema_fields(schema: dict, prefix: str = "") -> list[str]:
+    if not isinstance(schema, dict):
+        return []
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        properties = schema.get("properties", {})
+        fields: list[str] = []
+        if isinstance(properties, dict):
+            for key, subschema in properties.items():
+                name = f"{prefix}{key}"
+                fields.append(name)
+                fields.extend(_flatten_schema_fields(subschema, prefix=f"{name}."))
+        return fields
+    if schema_type == "array":
+        items = schema.get("items")
+        return _flatten_schema_fields(items or {}, prefix=prefix)
+    return []
