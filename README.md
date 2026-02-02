@@ -43,7 +43,9 @@ Optional (LLM fallback):
 Increment 6 (Field Extraction):
 - Set `LLM_PROVIDER=openai`
 - Set `OPENAI_API_KEY=...`
-- In Labels view, generate schema + instructions from examples or edit them directly
+- In Labels view, generate schema + instructions from OCR examples or edit them directly.
+  - Schema generation uses an LLM with a refinement pass to limit fields to 15 and
+    enforce sensible array vs string types.
 - Run OCR, then click **Extract fields** in the Job actions or per-file controls.
 
 ## Authentication (OAuth)
@@ -111,6 +113,8 @@ Tune these in `.env`:
 
 If a file is below threshold, the LLM fallback runs (when configured) and stores
 its suggestion alongside the rule-based result.
+The UI shows the best candidate even when below threshold and lists all scores
+from highest to lowest.
 
 ### Local labels
 Labels are stored in SQLite (`app.db`, gitignored). Each label keeps OCR text examples
@@ -135,6 +139,7 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
    - (Optional) **Add as label example** to attach OCR to a label.
 7) Click **Classify files** to auto-assign labels using OCR similarity.
    - If similarity is below threshold, LLM fallback runs automatically (if configured).
+   - The UI shows the best candidate and all candidate scores.
 9) In **Labels**, edit schema + instructions or generate them from OCR examples.
 10) Click **Extract fields** (job-level or per-file) to populate extracted fields.
 11) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
