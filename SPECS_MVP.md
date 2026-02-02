@@ -132,7 +132,7 @@ repo/
 
 ## 4. Increments Overview (Final Target)
 - Increment 1: Manual rename + undo (Drive) + OAuth-based access token flow
-- Increment 2: Per-file REPORT.txt generation (file list + extracted-content placeholders) + upload
+- Increment 2: REPORT.txt generation for latest job (file list + extracted-content placeholders) + upload
 - Increment 3: OCR for job files (and later example files)
 - Increment 4: User-defined labels (“training”) + similarity-based classification (SQLite-backed)
 - Increment 5: LLM label-name fallback (suggestion layer when no label match)
@@ -232,12 +232,16 @@ Notes:
 - Undo restores old names
 - UI imports services only; no adapter imports
 
-## 6. INCREMENT 2 SPEC — Per-file REPORT.txt (Files + Extracted Contents Placeholder)
+## 6. INCREMENT 2 SPEC — REPORT.txt for Latest Job (Files + Extracted Contents Placeholder)
 
 ### 6.1 Scope (MUST implement)
-Generate a report file in the same Drive folder **based solely on**:
-- what files exist in the job (using the names stored in `job_files.name`, which should reflect any applied renames), and
-- the extracted contents for each file (for Increment 2 this is a placeholder).
+Generate a report file in the same Drive folder **based solely on the latest job**:
+- what files exist in the latest job (using the names stored in `job_files.name`, which should reflect any applied renames), and
+- the extracted contents for each file (for Increment 2 this is a placeholder unless data already exists).
+
+Evolved Increment 2 behavior:
+- Report rendering MUST be driven by a structured report model (not ad-hoc string concatenation).
+- If OCR text or extracted fields already exist, the report SHOULD include them; otherwise placeholders remain.
 
 MUST implement:
 - Filename: `REPORT_YYYY-MM-DD.txt` (date = local job date)
@@ -249,8 +253,8 @@ MUST implement:
   - `mime_type`
   - `EXTRACTED_TEXT` placeholder (until Increment 3+)
   - `EXTRACTED_FIELDS_JSON` placeholder (until Increment 6+)
-- User can preview report text in UI
-- User can write report to Drive folder
+- User can preview report text in UI (latest job only)
+- User can write report to Drive folder (latest job only)
 
 ### 6.2 Non-goals (MUST NOT implement)
 - OCR or any extraction logic (Increment 3+)
@@ -263,7 +267,7 @@ The report MUST be plain text and use stable section headers exactly as follows.
 
 **Header (minimal):**
 - `REPORT_VERSION: 1`
-- `JOB_ID: <job_id>`
+- `JOB_ID: <job_id>` (latest job only)
 - `FOLDER_ID: <folder_id>`
 - `GENERATED_AT: <ISO-8601 local datetime>`
 
@@ -296,12 +300,13 @@ Notes:
 
 ### 6.5 Services requirements
 - ReportService
-  - `preview_report(job_id: str) -> str`
-  - `write_report(job_id: str) -> str` (returns created report `file_id`)
+  - `preview_report(job_id: str | None = None) -> str`
+  - `write_report(job_id: str | None = None) -> str` (returns created report `file_id`)
 - For Increment 2, the service MUST:
   - load `jobs` + `job_files` from SQLite
+  - resolve latest job if `job_id` is None (by `jobs.created_at` DESC)
   - render the canonical report format above
-  - fill `EXTRACTED_*` blocks with the placeholder token
+  - fill `EXTRACTED_*` blocks with the placeholder token if no stored data exists
 
 ### 6.6 Storage changes
 - Storing the created report `file_id` is optional but recommended:
@@ -314,8 +319,8 @@ Notes:
   - Button: “Write Report to Folder”
 
 ### 6.8 Acceptance criteria
-- Report preview lists **all job files** in stable order
-- Each file block contains the placeholder token for extracted content
+- Report preview lists **latest job files** in stable order
+- Each file block contains the placeholder token for extracted content when no stored data exists
 - Report upload creates a text file in the Drive folder
 - No OCR/LLM/labels are required for Increment 2
 
@@ -565,14 +570,14 @@ For each file:
 - Warnings are produced for missing/uncertain fields
 - Labels support extraction instructions and OCR-driven schema generation
 
-## 11. INCREMENT 7 SPEC — Report Filled via Consolidation
+## 11. INCREMENT 7 SPEC — Report Filled via Consolidation (Latest Job Only)
 ### 11.1 Scope (MUST implement)
-- Generate a final REPORT.txt that is populated from extracted fields
-- Report inventory includes counts per label
+- Generate a final REPORT.txt for the **latest job only**, populated from extracted fields
+- Report inventory includes counts per label (latest job only)
 
 ### 11.2 Consolidation rules (deterministic)
-- Consolidation is dynamic across all extracted keys:
-  - Collect all unique keys found across all extracted documents in a job
+- Consolidation is dynamic across all extracted keys for the latest job:
+- Collect all unique keys found across all extracted documents in the latest job
   - For each key, aggregate candidates from extraction outputs across files
   - Score candidates by confidence and frequency across files
   - Choose best candidate if score clearly highest
@@ -581,10 +586,11 @@ For each file:
 
 ### 11.3 Services requirements
 - ConsolidationService
-  - consolidate_report_fields(job_id) -> report_fields + notes
+  - consolidate_report_fields(job_id) -> report_fields + notes (latest job only)
+  - resolve latest job if `job_id` is None (by `jobs.created_at` DESC)
 - ReportService updated
-  - preview_report uses consolidated values
-  - write_report writes final report
+  - preview_report uses consolidated values for latest job
+  - write_report writes final report for latest job
 
 ### 11.4 Storage changes
 - Add table:
@@ -599,7 +605,7 @@ For each file:
   - Show summary: number renamed, number skipped, number needs review
 
 ### 11.6 Acceptance criteria
-- Report is filled with consolidated values, stable schema, and includes label inventory
+- Report is filled with consolidated values, stable schema, and includes label inventory for the latest job only
 - Fresh deployment can auto-load agent presets from `presets.json`
 - Broken naming templates are rejected by schema validation before save
 - Non-technical users can define new document types via the no-code schema builder without writing JSON
