@@ -570,31 +570,60 @@ For each file:
 - Warnings are produced for missing/uncertain fields
 - Labels support extraction instructions and OCR-driven schema generation
 
-## 11. INCREMENT 7 SPEC — Report Filled via Consolidation (Latest Job Only)
+## 11. INCREMENT 7 SPEC — Final Report (Latest Job Only)
 ### 11.1 Scope (MUST implement)
-- Generate a final REPORT.txt for the **latest job only**, populated from extracted fields
-- Report inventory includes counts per label (latest job only)
+- Generate a final REPORT.txt for the **latest job only** with a human-readable, deterministic format
+- Report includes, per file:
+  - final filename (post-rename)
+  - final classification (label)
+  - extracted fields (pretty-printed, not JSON)
+- Report must be easy to scan and visually clean (consistent spacing and headings)
 
-### 11.2 Consolidation rules (deterministic)
-- Consolidation is dynamic across all extracted keys for the latest job:
-- Collect all unique keys found across all extracted documents in the latest job
-  - For each key, aggregate candidates from extraction outputs across files
-  - Score candidates by confidence and frequency across files
-  - Choose best candidate if score clearly highest
-  - If multiple strong candidates -> “MULTIPLE” and list in Notes
-  - If no candidates -> “UNKNOWN"
+### 11.2 Report format (deterministic, human-readable)
+The report MUST be plain text and use stable section headers exactly as follows.
+
+**Header (minimal):**
+- `REPORT_VERSION: 2`
+- `JOB_ID: <job_id>` (latest job only)
+- `FOLDER_ID: <folder_id>`
+- `GENERATED_AT: <ISO-8601 local datetime>`
+
+**Files section (stable order):**
+Order files by `(sort_index ASC, final_name ASC, file_id ASC)`.
+
+For each file, render:
+```
+--- FILE START ---
+INDEX: <1-based index in stable order>
+FINAL_NAME: <final filename>
+FILE_ID: <file_id>
+FINAL_LABEL: <label name or UNLABELED>
+
+EXTRACTED_FIELDS:
+<pretty-printed fields, one per line: KEY: VALUE>
+--- FILE END ---
+```
+
+Notes:
+- `FINAL_NAME` uses applied rename if present; otherwise use current stored `job_files.name`.
+- `FINAL_LABEL` resolution order:
+  1) explicit user override (if any)
+  2) stored label assignment (MATCHED/AMBIGUOUS/NO_MATCH)
+  3) LLM fallback label suggestion (if configured and present)
+  4) `UNLABELED`
+- `EXTRACTED_FIELDS` must omit JSON syntax:
+  - Render keys in deterministic order (schema order if available; otherwise alphabetical)
+  - Arrays render as comma-separated values on one line
+  - Missing fields render as `UNKNOWN`
+- Do NOT include OCR text in the report.
 
 ### 11.3 Services requirements
-- ConsolidationService
-  - consolidate_report_fields(job_id) -> report_fields + notes (latest job only)
-  - resolve latest job if `job_id` is None (by `jobs.created_at` DESC)
 - ReportService updated
-  - preview_report uses consolidated values for latest job
+  - preview_report uses final per-file values for latest job
   - write_report writes final report for latest job
+  - resolve latest job if `job_id` is None (by `jobs.created_at` DESC)
 
 ### 11.4 Storage changes
-- Add table:
-  - consolidation_results(job_id TEXT PRIMARY KEY, report_fields_json TEXT, notes_json TEXT, updated_at TEXT)
 - Persist final applied rename plan (optional but recommended):
   - applied_renames(job_id TEXT, file_id TEXT, old_name TEXT, new_name TEXT, applied_at TEXT)
 
@@ -605,7 +634,8 @@ For each file:
   - Show summary: number renamed, number skipped, number needs review
 
 ### 11.6 Acceptance criteria
-- Report is filled with consolidated values, stable schema, and includes label inventory for the latest job only
+- Report includes only final name, final label, and extracted fields for the latest job
+- Report is deterministic, easy to scan, and excludes OCR text
 - Fresh deployment can auto-load agent presets from `presets.json`
 - Broken naming templates are rejected by schema validation before save
 - Non-technical users can define new document types via the no-code schema builder without writing JSON
