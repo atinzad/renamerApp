@@ -493,7 +493,7 @@ Notes:
 
 ### 9.6 UI requirements
 - Job page:
-  - Button: “Classify fallback labels (LLM)”
+  - No separate button; LLM fallback runs automatically when similarity is below threshold
   - Column: LLM suggestion + confidence
   - Optional override selector
 
@@ -552,6 +552,9 @@ For each file:
   - For each label: define extraction_schema (JSON)
   - For each label: define extraction_instructions (text)
   - “Build schema from OCR example” action that generates schema + instructions
+    - Schema generation uses an LLM with a refinement pass
+    - Cap schemas at 15 fields; use concise English snake_case keys
+    - Arrays only when explicitly justified (plural list fields); otherwise strings
 - Job page:
   - Button: “Extract fields”
   - For each file: show extracted fields (expandable)
