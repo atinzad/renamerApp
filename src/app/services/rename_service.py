@@ -41,10 +41,11 @@ class RenameService:
         applied_at = datetime.now(timezone.utc)
         undo = UndoLog(job_id=job_id, created_at=applied_at, ops=ops)
         self._storage.save_undo_log(undo)
-        self._storage.save_applied_renames(job_id, ops, applied_at.isoformat())
 
         for op in ops:
             self._drive.rename_file(op.file_id, op.new_name)
+
+        self._storage.save_applied_renames(job_id, ops, applied_at.isoformat())
 
     def undo_last(self, job_id: str) -> None:
         job = self._storage.get_job(job_id)
