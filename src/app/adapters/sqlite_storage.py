@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.domain.doc_types import DocType, DocTypeClassification, signals_from_json, signals_to_json
 from app.domain.labels import Label, LabelExample
-from app.domain.models import FileRef, Job, OCRResult, RenameOp, UndoLog
+from app.domain.models import FileRef, Job, JobFileRecord, OCRResult, RenameOp, UndoLog
 from app.ports.storage_port import StoragePort
 
 
@@ -123,6 +123,31 @@ class SQLiteStorage(StoragePort):
             ]
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch job files") from exc
+
+    def get_job_files_full(self, job_id: str) -> list[JobFileRecord]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT job_id, file_id, name, mime_type, sort_index
+                    FROM job_files
+                    WHERE job_id = ?
+                    ORDER BY sort_index ASC, name ASC, file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            return [
+                JobFileRecord(
+                    job_id=row[0],
+                    file_id=row[1],
+                    name=row[2],
+                    mime_type=row[3],
+                    sort_index=row[4],
+                )
+                for row in rows
+            ]
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch full job files") from exc
 
     def save_applied_renames(
         self, job_id: str, ops: list[RenameOp], applied_at_iso: str
