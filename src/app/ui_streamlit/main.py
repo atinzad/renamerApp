@@ -890,6 +890,18 @@ def main() -> None:
     if job_id:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
+        try:
+            token = _ensure_access_token(access_token, client_id, client_secret)
+            services = _get_services(token, sqlite_path)
+            summary = services["report_service"].get_final_report_summary(job_id)
+            st.caption(
+                "Summary — "
+                f"Renamed: {summary['renamed']}, "
+                f"Skipped: {summary['skipped']}, "
+                f"Needs review: {summary['needs_review']}"
+            )
+        except Exception:
+            pass
 
         report_cols = st.columns(5)
         run_ocr_clicked = report_cols[0].button(
@@ -944,19 +956,6 @@ def main() -> None:
             value=st.session_state.get("report_preview", ""),
             height=300,
         )
-
-        try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
-            services = _get_services(token, sqlite_path)
-            summary = services["report_service"].get_report_summary(job_id)
-            st.caption(
-                "Summary — "
-                f"Renamed: {summary['renamed']}, "
-                f"Skipped: {summary['skipped']}, "
-                f"Needs review: {summary['needs_review']}"
-            )
-        except Exception:
-            pass
 
         if write_report_clicked:
             try:

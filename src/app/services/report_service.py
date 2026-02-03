@@ -103,6 +103,10 @@ class ReportService:
             raise RuntimeError("Job not found.")
         return job
 
+    @staticmethod
+    def _report_filename(created_at) -> str:
+        return f"REPORT_{local_date_yyyy_mm_dd(created_at)}.txt"
+
     def get_report_summary(self, job_id: str | None = None) -> dict[str, int]:
         return self.get_final_report_summary(job_id)
 
@@ -145,13 +149,24 @@ class ReportService:
         }
 
     def _get_override_label_id(self, job_id: str, file_id: str) -> str | None:
-        override = self._storage.get_file_label_override(job_id, file_id)
-        if isinstance(override, str):
-            return override
-        return self._extract_value(override, "label_id") if override else None
+        getter = getattr(self._storage, "get_file_label_override", None)
+        if callable(getter):
+            override = getter(job_id, file_id)
+            if isinstance(override, str):
+                return override
+            return self._extract_value(override, "label_id") if override else None
+        legacy_getter = getattr(self._storage, "get_file_label_override_id", None)
+        if callable(legacy_getter):
+            return legacy_getter(job_id, file_id)
+        return None
 
     def _get_label_assignment(self, job_id: str, file_id: str):
-        assignment = self._storage.get_file_label_assignment(job_id, file_id)
+        getter = getattr(self._storage, "get_file_label_assignment", None)
+        assignment = getter(job_id, file_id) if callable(getter) else None
+        if assignment is None:
+            legacy_getter = getattr(self._storage, "get_file_label_assignment_summary", None)
+            if callable(legacy_getter):
+                assignment = legacy_getter(job_id, file_id)
         if assignment is None:
             return None
         if isinstance(assignment, tuple) and len(assignment) >= 3:

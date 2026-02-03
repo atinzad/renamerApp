@@ -161,7 +161,7 @@ def test_preview_report_excludes_ocr_text() -> None:
     report_text = service.preview_report(job.job_id)
 
     assert "EXTRACTED_TEXT" not in report_text
-    assert "EXTRACTED_FIELDS:\nUNKNOWN" in report_text
+    assert "EXTRACTED_FIELDS:\nunknown: UNKNOWN" in report_text
 
 
 def test_preview_report_pretty_prints_fields() -> None:
