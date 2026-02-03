@@ -17,7 +17,7 @@ from .label_fallback import (
 )
 from .models import FileRef, Job, RenameOp, UndoLog
 from .rename_logic import build_manual_plan, resolve_collisions, sanitize_filename
-from .report_rendering import render_increment2_report
+from .report_rendering import render_increment2_report, render_increment7_report
 from .schema_validation import validate_schema_config
 from .similarity import cosine_similarity, jaccard_similarity, normalize_text_to_tokens
 
@@ -47,5 +47,6 @@ __all__ = [
     "validate_schema_config",
     "normalize_text_to_tokens",
     "render_increment2_report",
+    "render_increment7_report",
     "normalize_labels_llm",
 ]

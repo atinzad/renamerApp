@@ -37,3 +37,46 @@ class UndoLog:
 class OCRResult:
     text: str
     confidence: float | None
+
+
+@dataclass
+class JobFileRecord:
+    job_id: str
+    file_id: str
+    name: str
+    mime_type: str
+    sort_index: int | None = None
+
+
+@dataclass
+class LabelAssignment:
+    job_id: str
+    file_id: str
+    label_id: str | None
+    status: str
+    score: float
+
+
+@dataclass
+class LLMLabelClassification:
+    job_id: str
+    file_id: str
+    label_name: str | None
+    confidence: float
+
+
+@dataclass
+class ExtractionRecord:
+    job_id: str
+    file_id: str
+    schema_json: str | None
+    fields_json: str | None
+
+
+@dataclass
+class AppliedRename:
+    job_id: str
+    file_id: str
+    old_name: str
+    new_name: str
+    applied_at: str

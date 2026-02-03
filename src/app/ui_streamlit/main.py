@@ -901,9 +901,9 @@ def main() -> None:
         report_cols[1].caption("Embedding + lexical, with LLM fallback on no-match.")
         extract_clicked = report_cols[2].button("Extract fields")
         report_cols[2].caption("LLM-powered field extraction.")
-        preview_report_clicked = report_cols[3].button("Preview Report")
+        preview_report_clicked = report_cols[3].button("Preview Final Report")
         write_report_clicked = report_cols[4].button(
-            "Write Report to Folder",
+            "Write Final Report",
             disabled=job_id is None,
         )
         if run_ocr_clicked:
@@ -924,7 +924,7 @@ def main() -> None:
                 services = _get_services(token, sqlite_path)
                 report_text = services["report_service"].preview_report(job_id)
                 st.session_state["report_preview"] = report_text
-                st.success("Report preview generated.")
+                st.success("Final report preview generated.")
             except Exception as exc:
                 st.error(f"Report preview failed: {exc}")
 
@@ -940,17 +940,30 @@ def main() -> None:
                 st.error(f"Extraction failed: {exc}")
 
         st.text_area(
-            "Report Preview",
+            "Final Report Preview",
             value=st.session_state.get("report_preview", ""),
             height=300,
         )
+
+        try:
+            token = _ensure_access_token(access_token, client_id, client_secret)
+            services = _get_services(token, sqlite_path)
+            summary = services["report_service"].get_report_summary(job_id)
+            st.caption(
+                "Summary — "
+                f"Renamed: {summary['renamed']}, "
+                f"Skipped: {summary['skipped']}, "
+                f"Needs review: {summary['needs_review']}"
+            )
+        except Exception:
+            pass
 
         if write_report_clicked:
             try:
                 token = _ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 report_file_id = services["report_service"].write_report(job_id)
-                st.success(f"Report uploaded. File ID: {report_file_id}")
+                st.success(f"Final report uploaded. File ID: {report_file_id}")
             except Exception as exc:
                 st.error(f"Report upload failed: {exc}")
         if classify_clicked:

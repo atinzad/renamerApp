@@ -38,8 +38,10 @@ class RenameService:
         if job is None:
             raise RuntimeError(f"Job not found: {job_id}")
 
-        undo = UndoLog(job_id=job_id, created_at=datetime.now(timezone.utc), ops=ops)
+        applied_at = datetime.now(timezone.utc)
+        undo = UndoLog(job_id=job_id, created_at=applied_at, ops=ops)
         self._storage.save_undo_log(undo)
+        self._storage.save_applied_renames(job_id, ops, applied_at.isoformat())
 
         for op in ops:
             self._drive.rename_file(op.file_id, op.new_name)
@@ -57,3 +59,4 @@ class RenameService:
             self._drive.rename_file(op.file_id, op.old_name)
 
         self._storage.clear_last_undo_log(job_id)
+        self._storage.clear_applied_renames(job_id)

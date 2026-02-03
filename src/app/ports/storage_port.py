@@ -4,7 +4,18 @@ from typing import Protocol
 
 from app.domain.doc_types import DocType, DocTypeClassification
 from app.domain.labels import Label, LabelExample
-from app.domain.models import FileRef, Job, OCRResult, UndoLog
+from app.domain.models import (
+    AppliedRename,
+    ExtractionRecord,
+    FileRef,
+    Job,
+    JobFileRecord,
+    LabelAssignment,
+    LLMLabelClassification,
+    OCRResult,
+    RenameOp,
+    UndoLog,
+)
 
 
 class StoragePort(Protocol):
@@ -14,11 +25,28 @@ class StoragePort(Protocol):
     def get_job(self, job_id: str) -> Job | None:
         """Return a job by id, or None if missing."""
 
+    def get_latest_job(self) -> Job | None:
+        """Return the most recent job by created_at, or None if none exist."""
+
     def save_job_files(self, job_id: str, files: list[FileRef]) -> None:
         """Persist job file references."""
 
     def get_job_files(self, job_id: str) -> list[FileRef]:
         """Return file references for a job."""
+
+    def get_job_files_full(self, job_id: str) -> list[JobFileRecord]:
+        """Return full job file records for a job."""
+
+    def save_applied_renames(
+        self, job_id: str, ops: list[RenameOp], applied_at_iso: str
+    ) -> None:
+        """Persist applied rename operations for a job."""
+
+    def list_applied_renames(self, job_id: str) -> list[AppliedRename]:
+        """Return applied rename operations for a job."""
+
+    def clear_applied_renames(self, job_id: str) -> None:
+        """Clear applied rename operations for a job."""
 
     def save_undo_log(self, undo: UndoLog) -> None:
         """Persist an undo log entry."""
@@ -51,6 +79,9 @@ class StoragePort(Protocol):
 
     def list_labels(self, include_inactive: bool = False) -> list[Label]:
         """Return labels, optionally including inactive ones."""
+
+    def list_labels_in_order(self) -> list[Label]:
+        """Return labels in deterministic order (created_at ASC, label_id ASC)."""
 
     def get_label(self, label_id: str) -> Label | None:
         """Return a label by id, or None if missing."""
@@ -100,7 +131,9 @@ class StoragePort(Protocol):
     ) -> None:
         """Persist a classification assignment for a job file."""
 
-    def get_file_label_assignment(self, job_id: str, file_id: str) -> dict | None:
+    def get_file_label_assignment(
+        self, job_id: str, file_id: str
+    ) -> LabelAssignment | None:
         """Return a classification assignment for a job file."""
 
     def list_file_label_assignments(self, job_id: str) -> list[dict]:
@@ -111,8 +144,8 @@ class StoragePort(Protocol):
     ) -> None:
         """Persist a manual label override for a job file."""
 
-    def get_file_label_override(self, job_id: str, file_id: str) -> dict | None:
-        """Return a manual label override for a job file."""
+    def get_file_label_override(self, job_id: str, file_id: str) -> str | None:
+        """Return a manual label override label_id, if any."""
 
     def list_file_label_overrides(self, job_id: str) -> list[dict]:
         """Return all label overrides for a job."""
@@ -166,7 +199,7 @@ class StoragePort(Protocol):
 
     def get_llm_label_classification(
         self, job_id: str, file_id: str
-    ) -> tuple[str | None, float, list[str]] | None:
+    ) -> LLMLabelClassification | None:
         """Return an LLM label fallback classification for a job file."""
 
     def list_llm_label_classifications(
@@ -199,7 +232,7 @@ class StoragePort(Protocol):
     ) -> None:
         """Persist extraction output for a job file."""
 
-    def get_extraction(self, job_id: str, file_id: str) -> dict | None:
+    def get_extraction(self, job_id: str, file_id: str) -> ExtractionRecord | None:
         """Return extraction output for a job file."""
 
     def get_file_label_override_id(self, job_id: str, file_id: str) -> str | None:

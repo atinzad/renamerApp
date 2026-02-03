@@ -59,6 +59,29 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch job") from exc
 
+    def get_latest_job(self) -> Job | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT job_id, folder_id, created_at, status, report_file_id
+                    FROM jobs
+                    ORDER BY created_at DESC, job_id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            if row is None:
+                return None
+            return Job(
+                job_id=row[0],
+                folder_id=row[1],
+                created_at=datetime.fromisoformat(row[2]),
+                status=row[3],
+                report_file_id=row[4],
+            )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch latest job") from exc
+
     def save_job_files(self, job_id: str, files: list[FileRef]) -> None:
         try:
             with self._connect() as conn:
@@ -100,6 +123,60 @@ class SQLiteStorage(StoragePort):
             ]
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch job files") from exc
+
+    def save_applied_renames(
+        self, job_id: str, ops: list[RenameOp], applied_at_iso: str
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO applied_renames(job_id, file_id, old_name, new_name, applied_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        old_name = excluded.old_name,
+                        new_name = excluded.new_name,
+                        applied_at = excluded.applied_at
+                    """,
+                    [
+                        (job_id, op.file_id, op.old_name, op.new_name, applied_at_iso)
+                        for op in ops
+                    ],
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to save applied renames") from exc
+
+    def list_applied_renames(self, job_id: str) -> list[dict]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_id, old_name, new_name, applied_at
+                    FROM applied_renames
+                    WHERE job_id = ?
+                    ORDER BY applied_at ASC, file_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            return [
+                {
+                    "file_id": row[0],
+                    "old_name": row[1],
+                    "new_name": row[2],
+                    "applied_at": row[3],
+                }
+                for row in rows
+            ]
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to list applied renames") from exc
+
+    def clear_applied_renames(self, job_id: str) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM applied_renames WHERE job_id = ?", (job_id,))
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to clear applied renames") from exc
 
     def save_undo_log(self, undo: UndoLog) -> None:
         try:
@@ -1327,6 +1404,18 @@ class SQLiteStorage(StoragePort):
                 )
                 conn.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS applied_renames(
+                        job_id TEXT,
+                        file_id TEXT,
+                        old_name TEXT,
+                        new_name TEXT,
+                        applied_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_extractions_job_id
                     ON extractions(job_id)
                     """
@@ -1347,6 +1436,12 @@ class SQLiteStorage(StoragePort):
                     """
                     CREATE INDEX IF NOT EXISTS idx_overrides_job_id
                     ON file_label_overrides(job_id)
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_applied_renames_job_id
+                    ON applied_renames(job_id)
                     """
                 )
                 columns = {

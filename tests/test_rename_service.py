@@ -26,6 +26,7 @@ def test_apply_rename_saves_undo_and_renames() -> None:
     service.apply_rename(job.job_id, ops)
 
     storage.save_undo_log.assert_called_once()
+    storage.save_applied_renames.assert_called_once()
     undo_arg = storage.save_undo_log.call_args.args[0]
     assert isinstance(undo_arg, UndoLog)
     assert undo_arg.job_id == job.job_id
@@ -72,6 +73,7 @@ def test_undo_last_renames_in_reverse_and_clears() -> None:
         ((ops[0].file_id, ops[0].old_name),),
     ]
     storage.clear_last_undo_log.assert_called_once_with(job.job_id)
+    storage.clear_applied_renames.assert_called_once_with(job.job_id)
 
 
 def test_undo_last_missing_log_raises() -> None:
