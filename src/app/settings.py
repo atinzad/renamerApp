@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import os
 
+try:
+    import psutil
+except ModuleNotFoundError:
+    psutil = None
+
 OCR_LANG = os.getenv("OCR_LANG", "ara+eng")
-OCR_WORKERS = int(os.getenv("OCR_WORKERS", "1"))
+if psutil is not None:
+    _cpu_count = psutil.cpu_count(logical=True)
+else:
+    _cpu_count = os.cpu_count()
+OCR_WORKERS = _cpu_count if _cpu_count and _cpu_count > 0 else 1
 EMBEDDINGS_ENABLED = os.getenv("EMBEDDINGS_ENABLED", "false").lower() == "true"
 # Embeddings switching: openai | local | sentence-transformers | bge-m3 | dummy
 EMBEDDINGS_PROVIDER = os.getenv("EMBEDDINGS_PROVIDER", "openai").lower()

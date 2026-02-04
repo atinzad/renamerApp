@@ -43,6 +43,17 @@ class OCRService:
             image_rows,
             key=lambda row: (row["sort_index"], row["name"], row["file_id"]),
         )
+        if file_ids is None:
+            filtered_rows = []
+            get_ocr = getattr(self._storage, "get_ocr_result", None)
+            for row in ordered_rows:
+                if callable(get_ocr):
+                    existing = get_ocr(job_id, row["file_id"])
+                    text = getattr(existing, "text", None)
+                    if isinstance(text, str) and text.strip():
+                        continue
+                filtered_rows.append(row)
+            ordered_rows = filtered_rows
         if OCR_WORKERS <= 1 or len(ordered_rows) <= 1:
             for row in ordered_rows:
                 file_id = row["file_id"]
