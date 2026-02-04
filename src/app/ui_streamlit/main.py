@@ -1158,6 +1158,16 @@ def main() -> None:
                 selected_label = None if choice == "(Clear)" else choice
                 previous_label = current_selections.get(file_ref.file_id)
                 current_selections[file_ref.file_id] = selected_label
+                if job_id and selected_label != previous_label:
+                    try:
+                        token = _ensure_access_token(access_token, client_id, client_secret)
+                        services = _get_services(token, sqlite_path)
+                        label_id = label_id_map.get(selected_label) if selected_label else None
+                        services["label_classification_service"].override_file_label(
+                            job_id, file_ref.file_id, label_id
+                        )
+                    except Exception as exc:
+                        st.error(f"Override update failed: {exc}")
                 if selected_label and job_id:
                     if st.button(
                         "Add as label example",
