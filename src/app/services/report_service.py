@@ -21,6 +21,7 @@ class ReportService:
         for index, file_ref in enumerate(job_files):
             final_name = applied_renames.get(file_ref.file_id, file_ref.name)
             fields, schema = self._get_extraction_payload(job.job_id, file_ref.file_id)
+            timings = self._get_file_timings(job.job_id, file_ref.file_id)
             file_rows.append(
                 {
                     "index": index,
@@ -30,6 +31,7 @@ class ReportService:
                     "final_label": self._get_final_label(job.job_id, file_ref.file_id),
                     "fields": fields,
                     "schema": schema,
+                    "timings_ms": timings,
                 }
             )
         ordered_files = sorted(
@@ -48,6 +50,7 @@ class ReportService:
                 final_label=item["final_label"],
                 extracted_fields=item["fields"],
                 schema=item["schema"],
+                timings_ms=item["timings_ms"],
             )
             for index, item in enumerate(ordered_files)
         ]
@@ -146,6 +149,17 @@ class ReportService:
         return {
             self._extract_value(item, "file_id"): self._extract_value(item, "new_name")
             for item in self._storage.list_applied_renames(job_id)
+        }
+
+    def _get_file_timings(self, job_id: str, file_id: str) -> dict[str, int | None]:
+        getter = getattr(self._storage, "get_file_timings", None)
+        record = getter(job_id, file_id) if callable(getter) else None
+        if record is None:
+            return {"ocr_ms": None, "classify_ms": None, "extract_ms": None}
+        return {
+            "ocr_ms": self._extract_value(record, "ocr_ms"),
+            "classify_ms": self._extract_value(record, "classify_ms"),
+            "extract_ms": self._extract_value(record, "extract_ms"),
         }
 
     def _get_override_label_id(self, job_id: str, file_id: str) -> str | None:

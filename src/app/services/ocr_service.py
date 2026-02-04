@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from time import perf_counter
 
 from app.ports.drive_port import DrivePort
 from app.ports.ocr_port import OCRPort
@@ -44,9 +46,19 @@ class OCRService:
         if OCR_WORKERS <= 1 or len(ordered_rows) <= 1:
             for row in ordered_rows:
                 file_id = row["file_id"]
+                started = perf_counter()
                 image_bytes = self._drive.download_file_bytes(file_id)
                 result = self._ocr.extract_text(image_bytes)
                 self._storage.save_ocr_result(job_id, file_id, result)
+                duration_ms = int((perf_counter() - started) * 1000)
+                self._storage.upsert_file_timings(
+                    job_id=job_id,
+                    file_id=file_id,
+                    ocr_ms=duration_ms,
+                    classify_ms=None,
+                    extract_ms=None,
+                    updated_at_iso=datetime.now(timezone.utc).isoformat(),
+                )
             return
 
         payloads: list[tuple[str, bytes]] = []
@@ -56,16 +68,18 @@ class OCRService:
             payloads.append((file_id, image_bytes))
 
         results: dict[str, object] = {}
+        timings_ms: dict[str, int] = {}
         errors: list[tuple[str, Exception]] = []
         with ThreadPoolExecutor(max_workers=OCR_WORKERS) as executor:
             future_map = {
-                executor.submit(self._ocr.extract_text, image_bytes): file_id
+                executor.submit(self._ocr.extract_text, image_bytes): (file_id, perf_counter())
                 for file_id, image_bytes in payloads
             }
             for future in as_completed(future_map):
-                file_id = future_map[future]
+                file_id, started = future_map[future]
                 try:
                     results[file_id] = future.result()
+                    timings_ms[file_id] = int((perf_counter() - started) * 1000)
                 except Exception as exc:
                     errors.append((file_id, exc))
 
@@ -79,3 +93,13 @@ class OCRService:
             if result is None:
                 continue
             self._storage.save_ocr_result(job_id, file_id, result)
+            duration_ms = timings_ms.get(file_id)
+            if duration_ms is not None:
+                self._storage.upsert_file_timings(
+                    job_id=job_id,
+                    file_id=file_id,
+                    ocr_ms=duration_ms,
+                    classify_ms=None,
+                    extract_ms=None,
+                    updated_at_iso=datetime.now(timezone.utc).isoformat(),
+                )

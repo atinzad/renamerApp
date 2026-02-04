@@ -80,3 +80,13 @@ class AppliedRename:
     old_name: str
     new_name: str
     applied_at: str
+
+
+@dataclass
+class FileTimingRecord:
+    job_id: str
+    file_id: str
+    ocr_ms: int | None
+    classify_ms: int | None
+    extract_ms: int | None
+    updated_at: str

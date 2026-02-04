@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from time import perf_counter
 
 from app.domain.extraction_models import GENERIC_MIN_SCHEMA
 from app.domain.schema_utils import apply_missing_field_policy
@@ -20,6 +21,7 @@ class ExtractionService:
             self.extract_fields_for_file(job_id, file_ref.file_id)
 
     def extract_fields_for_file(self, job_id: str, file_id: str) -> None:
+        started = perf_counter()
         schema, schema_warnings, instructions = self._resolve_schema(job_id, file_id)
         ocr_text = self._get_ocr_text(job_id, file_id)
         warnings: list[str] = list(schema_warnings)
@@ -52,6 +54,15 @@ class ExtractionService:
             fields_json=json.dumps(payload),
             confidences_json=json.dumps({}),
             updated_at=updated_at,
+        )
+        duration_ms = int((perf_counter() - started) * 1000)
+        self._storage.upsert_file_timings(
+            job_id=job_id,
+            file_id=file_id,
+            ocr_ms=None,
+            classify_ms=None,
+            extract_ms=duration_ms,
+            updated_at_iso=updated_at,
         )
 
     def _resolve_schema(self, job_id: str, file_id: str) -> tuple[dict, list[str], str]:

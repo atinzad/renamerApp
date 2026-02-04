@@ -8,6 +8,7 @@ from app.domain.models import (
     AppliedRename,
     ExtractionRecord,
     FileRef,
+    FileTimingRecord,
     Job,
     JobFileRecord,
     LabelAssignment,
@@ -47,6 +48,20 @@ class StoragePort(Protocol):
 
     def clear_applied_renames(self, job_id: str) -> None:
         """Clear applied rename operations for a job."""
+
+    def upsert_file_timings(
+        self,
+        job_id: str,
+        file_id: str,
+        ocr_ms: int | None,
+        classify_ms: int | None,
+        extract_ms: int | None,
+        updated_at_iso: str,
+    ) -> None:
+        """Persist per-file timing metrics (ms)."""
+
+    def get_file_timings(self, job_id: str, file_id: str) -> FileTimingRecord | None:
+        """Return per-file timing metrics if present."""
 
     def save_undo_log(self, undo: UndoLog) -> None:
         """Persist an undo log entry."""

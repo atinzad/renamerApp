@@ -15,6 +15,7 @@ class FinalReportFileBlock:
     final_label: str | None
     extracted_fields: dict[str, Any] | None
     schema: dict[str, Any] | None = None
+    timings_ms: dict[str, int | None] | None = None
 
 
 @dataclass
@@ -46,6 +47,7 @@ def render_report_v2(model: FinalReportModel) -> str:
     for file_block in model.files:
         label = file_block.final_label or UNLABELED_TOKEN
         field_lines = pretty_print_fields(file_block.extracted_fields, file_block.schema)
+        timing_lines = _render_timings(file_block.timings_ms)
         lines.extend(
             [
                 "--- FILE START ---",
@@ -56,6 +58,9 @@ def render_report_v2(model: FinalReportModel) -> str:
                 "",
                 "EXTRACTED_FIELDS:",
                 *field_lines,
+                "",
+                "TIMINGS_MS:",
+                *timing_lines,
                 "--- FILE END ---",
             ]
         )
@@ -82,3 +87,14 @@ def _format_value(value: Any) -> str:
             parts.append(f"{subkey}={_format_value(subval)}")
         return "; ".join(parts) if parts else UNKNOWN_TOKEN
     return str(value)
+
+
+def _render_timings(values: dict[str, int | None] | None) -> list[str]:
+    if not values:
+        return ["ocr_ms: UNKNOWN", "classify_ms: UNKNOWN", "extract_ms: UNKNOWN"]
+    ordered_keys = ["ocr_ms", "classify_ms", "extract_ms"]
+    lines: list[str] = []
+    for key in ordered_keys:
+        value = values.get(key)
+        lines.append(f"{key}: {value if value is not None else UNKNOWN_TOKEN}")
+    return lines

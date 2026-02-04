@@ -7,7 +7,15 @@ from uuid import uuid4
 
 from app.domain.doc_types import DocType, DocTypeClassification, signals_from_json, signals_to_json
 from app.domain.labels import Label, LabelExample
-from app.domain.models import FileRef, Job, JobFileRecord, OCRResult, RenameOp, UndoLog
+from app.domain.models import (
+    FileRef,
+    FileTimingRecord,
+    Job,
+    JobFileRecord,
+    OCRResult,
+    RenameOp,
+    UndoLog,
+)
 from app.ports.storage_port import StoragePort
 
 
@@ -202,6 +210,59 @@ class SQLiteStorage(StoragePort):
                 conn.execute("DELETE FROM applied_renames WHERE job_id = ?", (job_id,))
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to clear applied renames") from exc
+
+    def upsert_file_timings(
+        self,
+        job_id: str,
+        file_id: str,
+        ocr_ms: int | None,
+        classify_ms: int | None,
+        extract_ms: int | None,
+        updated_at_iso: str,
+    ) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO file_timings(
+                        job_id, file_id, ocr_ms, classify_ms, extract_ms, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id, file_id)
+                    DO UPDATE SET
+                        ocr_ms = COALESCE(excluded.ocr_ms, file_timings.ocr_ms),
+                        classify_ms = COALESCE(excluded.classify_ms, file_timings.classify_ms),
+                        extract_ms = COALESCE(excluded.extract_ms, file_timings.extract_ms),
+                        updated_at = excluded.updated_at
+                    """,
+                    (job_id, file_id, ocr_ms, classify_ms, extract_ms, updated_at_iso),
+                )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to upsert file timings") from exc
+
+    def get_file_timings(self, job_id: str, file_id: str) -> FileTimingRecord | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT job_id, file_id, ocr_ms, classify_ms, extract_ms, updated_at
+                    FROM file_timings
+                    WHERE job_id = ? AND file_id = ?
+                    """,
+                    (job_id, file_id),
+                ).fetchone()
+            if row is None:
+                return None
+            return FileTimingRecord(
+                job_id=row[0],
+                file_id=row[1],
+                ocr_ms=row[2],
+                classify_ms=row[3],
+                extract_ms=row[4],
+                updated_at=row[5],
+            )
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to fetch file timings") from exc
 
     def save_undo_log(self, undo: UndoLog) -> None:
         try:
@@ -1441,6 +1502,19 @@ class SQLiteStorage(StoragePort):
                 )
                 conn.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS file_timings(
+                        job_id TEXT,
+                        file_id TEXT,
+                        ocr_ms INTEGER,
+                        classify_ms INTEGER,
+                        extract_ms INTEGER,
+                        updated_at TEXT,
+                        PRIMARY KEY(job_id, file_id)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_extractions_job_id
                     ON extractions(job_id)
                     """
@@ -1467,6 +1541,12 @@ class SQLiteStorage(StoragePort):
                     """
                     CREATE INDEX IF NOT EXISTS idx_applied_renames_job_id
                     ON applied_renames(job_id)
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_file_timings_job_id
+                    ON file_timings(job_id)
                     """
                 )
                 columns = {

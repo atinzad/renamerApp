@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from time import perf_counter
+
 from app.domain.labels import NO_MATCH, decide_match
 from app.domain.similarity import cosine_similarity, jaccard_similarity, normalize_text_to_tokens
 from app.settings import AMBIGUITY_MARGIN, LEXICAL_MATCH_THRESHOLD, MATCH_THRESHOLD
@@ -51,8 +54,10 @@ class LabelClassificationService:
         labels: list,
         label_examples: dict[str, list],
     ) -> dict:
+        started = perf_counter()
         override = self._storage.get_file_label_override(job_id, file_id)
         if override is not None:
+            self._save_timing(job_id, file_id, started)
             return {
                 "label_id": override.get("label_id"),
                 "score": 0.0,
@@ -71,6 +76,7 @@ class LabelClassificationService:
                 score=0.0,
                 status=NO_MATCH,
             )
+            self._save_timing(job_id, file_id, started)
             return {
                 "label_id": None,
                 "score": 0.0,
@@ -152,6 +158,7 @@ class LabelClassificationService:
             except Exception:
                 llm_called = True
                 llm_result = None
+        self._save_timing(job_id, file_id, started)
         return {
             "label_id": best_label_id if status != NO_MATCH else None,
             "score": best_score,
@@ -179,3 +186,14 @@ class LabelClassificationService:
             file_rows, key=lambda row: (row["sort_index"], row["name"], row["file_id"])
         )
         return [row["file_ref"] for row in ordered_rows]
+
+    def _save_timing(self, job_id: str, file_id: str, started: float) -> None:
+        duration_ms = int((perf_counter() - started) * 1000)
+        self._storage.upsert_file_timings(
+            job_id=job_id,
+            file_id=file_id,
+            ocr_ms=None,
+            classify_ms=duration_ms,
+            extract_ms=None,
+            updated_at_iso=datetime.now(timezone.utc).isoformat(),
+        )
