@@ -1097,6 +1097,7 @@ def main() -> None:
             st.info("Labels loaded from labels.json. Run the migration to use SQLite.")
         current_selections = dict(label_selections)
         ocr_status: dict[str, dict[str, bool]] = {}
+        file_timings: dict[str, dict[str, int | None]] = {}
         if storage and job_id:
             for file_ref in files:
                 ocr_result = storage.get_ocr_result(job_id, file_ref.file_id)
@@ -1107,6 +1108,15 @@ def main() -> None:
                 ocr_status[file_ref.file_id] = {
                     "has_ocr": has_ocr,
                     "has_tokens": has_tokens,
+                }
+                try:
+                    timings = storage.get_file_timings(job_id, file_ref.file_id)
+                except Exception:
+                    timings = None
+                file_timings[file_ref.file_id] = {
+                    "ocr_ms": getattr(timings, "ocr_ms", None) if timings else None,
+                    "classify_ms": getattr(timings, "classify_ms", None) if timings else None,
+                    "extract_ms": getattr(timings, "extract_ms", None) if timings else None,
                 }
         for file_ref in files:
             badges: list[str] = []
@@ -1126,6 +1136,13 @@ def main() -> None:
                 key=expander_key,
             )
             if expanded:
+                timing = file_timings.get(file_ref.file_id, {})
+                timing_text = (
+                    f"OCR: {timing.get('ocr_ms') if timing.get('ocr_ms') is not None else '—'} ms | "
+                    f"Classification: {timing.get('classify_ms') if timing.get('classify_ms') is not None else '—'} ms | "
+                    f"Extraction: {timing.get('extract_ms') if timing.get('extract_ms') is not None else '—'} ms"
+                )
+                st.caption(timing_text)
                 selection_key = f"label_select_{file_ref.file_id}"
                 label_options = ["(Clear)"] + label_names
                 current_label = current_selections.get(file_ref.file_id)
