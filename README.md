@@ -34,6 +34,10 @@ source .venv/bin/activate
 ```bash
 PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 ```
+Or use the project shortcut:
+```bash
+make ui
+```
 
 Optional (LLM fallback):
 - Set `LLM_PROVIDER=openai`

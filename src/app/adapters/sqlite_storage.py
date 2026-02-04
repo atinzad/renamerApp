@@ -373,21 +373,15 @@ class SQLiteStorage(StoragePort):
             with self._connect() as conn:
                 conn.execute(
                     """
-                    INSERT INTO ocr_results(job_id, file_id, ocr_text, ocr_confidence, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(job_id, file_id)
+                    INSERT INTO ocr_results(file_id, ocr_text, ocr_confidence, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(file_id)
                     DO UPDATE SET
                         ocr_text = excluded.ocr_text,
                         ocr_confidence = excluded.ocr_confidence,
                         updated_at = excluded.updated_at
                     """,
-                    (
-                        job_id,
-                        file_id,
-                        result.text,
-                        result.confidence,
-                        updated_at,
-                    ),
+                    (file_id, result.text, result.confidence, updated_at),
                 )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to save OCR result") from exc
@@ -399,9 +393,9 @@ class SQLiteStorage(StoragePort):
                     """
                     SELECT ocr_text, ocr_confidence
                     FROM ocr_results
-                    WHERE job_id = ? AND file_id = ?
+                    WHERE file_id = ?
                     """,
-                    (job_id, file_id),
+                    (file_id,),
                 ).fetchone()
             if row is None:
                 return None
@@ -1342,15 +1336,37 @@ class SQLiteStorage(StoragePort):
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS ocr_results(
-                        job_id TEXT,
-                        file_id TEXT,
+                        file_id TEXT PRIMARY KEY,
                         ocr_text TEXT,
                         ocr_confidence REAL,
-                        updated_at TEXT,
-                        PRIMARY KEY(job_id, file_id)
+                        updated_at TEXT
                     )
                     """
                 )
+                columns = conn.execute("PRAGMA table_info(ocr_results)").fetchall()
+                column_names = {row[1] for row in columns}
+                if "job_id" in column_names:
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS ocr_results_v2(
+                            file_id TEXT PRIMARY KEY,
+                            ocr_text TEXT,
+                            ocr_confidence REAL,
+                            updated_at TEXT
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO ocr_results_v2(file_id, ocr_text, ocr_confidence, updated_at)
+                        SELECT file_id, ocr_text, ocr_confidence, updated_at
+                        FROM ocr_results
+                        WHERE updated_at IS NOT NULL
+                        ORDER BY updated_at ASC
+                        """
+                    )
+                    conn.execute("DROP TABLE ocr_results")
+                    conn.execute("ALTER TABLE ocr_results_v2 RENAME TO ocr_results")
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS labels(
