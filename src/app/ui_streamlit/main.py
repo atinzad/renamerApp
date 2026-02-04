@@ -1119,7 +1119,7 @@ def main() -> None:
             badge_text = f" [{' | '.join(badges)}]" if badges else ""
             expander_key = f"file_expander_{file_ref.file_id}"
             st.markdown(f"**{file_ref.name}**{badge_text}")
-            st.caption(f"{file_ref.file_id}")
+            st.caption(f"{file_ref.file_id} • {file_ref.mime_type}")
             expanded = st.toggle(
                 "Show details",
                 value=st.session_state.get(expander_key, False),
