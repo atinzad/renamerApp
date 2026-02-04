@@ -48,7 +48,11 @@ class GoogleDriveAdapter(DrivePort):
             payload = response.json()
             for item in payload.get("files", []):
                 mime_type = item.get("mimeType", "")
+                if mime_type == "application/vnd.google-apps.folder":
+                    continue
                 if mime_type == "text/plain":
+                    continue
+                if not mime_type.startswith("image/") and mime_type != "application/pdf":
                     continue
                 files.append(
                     FileRef(
