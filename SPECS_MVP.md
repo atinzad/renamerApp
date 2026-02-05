@@ -356,13 +356,16 @@ Notes:
   - OCR targets:
     - `image/*` and `application/pdf` files
     - skip `text/plain` files entirely
+  - Batch OCR skips files that already have OCR stored (unless file_ids is provided)
 
 ### 7.6 Storage changes (SQLite)
 - Add table:
-  - ocr_results(job_id TEXT, file_id TEXT, ocr_text TEXT, ocr_confidence REAL, updated_at TEXT)
+  - ocr_results(file_id TEXT PRIMARY KEY, ocr_text TEXT, ocr_confidence REAL, updated_at TEXT)
 - Add methods to StoragePort:
   - save_ocr_result(job_id, file_id, OCRResult)
   - get_ocr_result(job_id, file_id) -> OCRResult | None
+Notes:
+- OCR is stored per `file_id` only (not per job), and is reused across jobs.
 
 ### 7.7 UI requirements
 - Button: “Run OCR”
@@ -403,6 +406,7 @@ Notes:
   )
 - LabelExample(example_id: str, label_id: str, file_id: str, filename: str, created_at: datetime)
 - LabelMatch(label_id: str | None, score: float, rationale: str, status: one of {MATCHED, AMBIGUOUS, NO_MATCH})
+  - Manual overrides via UI dropdown persist to storage and take priority in final report resolution
 
 ### 8.4 New port: EmbeddingsPort (recommended)
 - embed_text(text: str) -> list[float]
@@ -616,6 +620,8 @@ Notes:
   - Arrays render as comma-separated values on one line
   - Missing fields render as `UNKNOWN`
 - Do NOT include OCR text in the report.
+- Include per-file timings (if available):
+  - `TIMINGS_MS` section with `ocr_ms`, `classify_ms`, `extract_ms` (UNKNOWN if missing)
 
 ### 11.3 Services requirements
 - ReportService updated
@@ -626,6 +632,8 @@ Notes:
 ### 11.4 Storage changes
 - Persist final applied rename plan (optional but recommended):
   - applied_renames(job_id TEXT, file_id TEXT, old_name TEXT, new_name TEXT, applied_at TEXT)
+- Persist per-file timings (optional but recommended):
+  - file_timings(job_id TEXT, file_id TEXT, ocr_ms INTEGER, classify_ms INTEGER, extract_ms INTEGER, updated_at TEXT)
 
 ### 11.5 UI requirements
 - Job page:
