@@ -47,10 +47,27 @@ def _ensure_label(label_service: LabelService, name: str, existing: dict[str, st
     return label.label_id
 
 
-def _truncate_for_embedding(text: str, max_chars: int = 12000) -> str:
+def _truncate_for_embedding(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars]
+
+
+def _embed_with_retry(embeddings: OpenAIEmbeddingsAdapter, text: str) -> list[float]:
+    limits = [12000, 8000, 4000, 2000]
+    last_error: Exception | None = None
+    for limit in limits:
+        chunk = _truncate_for_embedding(text, limit)
+        try:
+            if len(text) > limit:
+                print(f"[embeddings] truncating OCR text to {limit} chars")
+            return embeddings.embed_text(chunk)
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    raise RuntimeError("Failed to embed text")
 
 
 def _has_ocr(storage: SQLiteStorage, file_id: str) -> bool:
@@ -133,11 +150,8 @@ def main() -> None:
         print("[label] attaching example to label")
         example = storage.attach_label_example(label_id, file_id, filename or file_id)
         ocr_text = ocr_result.text or ""
-        if ocr_text and len(ocr_text) > 12000:
-            print(f"[embeddings] truncating OCR text from {len(ocr_text)} chars")
-        ocr_text = _truncate_for_embedding(ocr_text)
         token_fingerprint = normalize_text_to_tokens(ocr_text) if ocr_text else set()
-        embedding = embeddings.embed_text(ocr_text) if ocr_text else None
+        embedding = _embed_with_retry(embeddings, ocr_text) if ocr_text else None
         print("[embeddings] saving example features")
         storage.save_label_example_features(
             example.example_id,
