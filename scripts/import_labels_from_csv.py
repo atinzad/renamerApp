@@ -122,9 +122,19 @@ def main() -> None:
             skipped += 1
             continue
         print("[ocr] downloading file bytes")
-        file_bytes = drive.download_file_bytes(file_id)
+        try:
+            file_bytes = drive.download_file_bytes(file_id)
+        except Exception as exc:
+            print(f"[skip] download failed: {exc}")
+            skipped += 1
+            continue
         print("[ocr] running OCR")
-        ocr_result = ocr.extract_text(file_bytes)
+        try:
+            ocr_result = ocr.extract_text(file_bytes)
+        except Exception as exc:
+            print(f"[skip] OCR failed: {exc}")
+            skipped += 1
+            continue
         storage.save_ocr_result("import", file_id, ocr_result)
         print("[label] attaching example to label")
         example = storage.attach_label_example(label_id, file_id, filename or file_id)
