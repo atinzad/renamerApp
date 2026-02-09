@@ -14,24 +14,35 @@ class OpenAIEmbeddingsAdapter(EmbeddingsPort):
     def embed_text(self, text: str) -> list[float]:
         if not self._api_key:
             raise RuntimeError("OpenAI embeddings not configured")
-        response = requests.post(
-            f"{self._base_url}/embeddings",
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self._model,
-                "input": text,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        data = payload.get("data", [])
-        if not data:
-            raise RuntimeError("OpenAI embeddings returned no data")
-        embedding = data[0].get("embedding")
-        if not isinstance(embedding, list):
-            raise RuntimeError("OpenAI embeddings response missing embedding list")
-        return embedding
+        limits = [12000, 8000, 4000, 2000]
+        last_error: Exception | None = None
+        for limit in limits:
+            chunk = text if len(text) <= limit else text[:limit]
+            try:
+                response = requests.post(
+                    f"{self._base_url}/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self._model,
+                        "input": chunk,
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                data = payload.get("data", [])
+                if not data:
+                    raise RuntimeError("OpenAI embeddings returned no data")
+                embedding = data[0].get("embedding")
+                if not isinstance(embedding, list):
+                    raise RuntimeError("OpenAI embeddings response missing embedding list")
+                return embedding
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError("OpenAI embeddings failed")
