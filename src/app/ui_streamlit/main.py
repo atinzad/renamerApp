@@ -342,6 +342,14 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                     st.error(f"Save failed: {exc}")
             with st.expander("Build schema from examples", expanded=False):
                 st.caption("Uses all stored OCR examples for this label.")
+                schema_hint_key = f"schema_hint_{label.label_id}"
+                schema_hint = st.text_area(
+                    "Optional schema guidance",
+                    value=st.session_state.get(schema_hint_key, ""),
+                    key=schema_hint_key,
+                    height=120,
+                    help="Provide extra context or constraints to guide schema generation.",
+                )
                 if st.button(
                     "Generate schema",
                     key=f"generate_schema_{label.label_id}",
@@ -359,6 +367,8 @@ def _render_labels_view(access_token: str, sqlite_path: str) -> None:
                             st.error("No OCR examples available for this label.")
                         else:
                             combined = "\n\n".join(ocr_texts)
+                            if schema_hint.strip():
+                                combined = f"{schema_hint.strip()}\n\n{combined}"
                             with st.spinner("Generating schema..."):
                                 services["schema_builder_service"].build_from_ocr(
                                     label.label_id, combined
