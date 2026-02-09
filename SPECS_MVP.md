@@ -226,7 +226,7 @@ Notes:
 - job_files replaced when create_job called again for same job_id (normally not needed)
 
 ### 5.7 Acceptance criteria / definition of done
-- List files lists image/* files in folder
+- List files includes only `image/*` and `application/pdf` files; skips folders and other mime types (including `text/plain`)
 - Preview returns sanitized, collision-free names (including against unchanged files)
 - Apply rename changes Drive file names accordingly
 - Undo restores old names
@@ -381,6 +381,7 @@ Notes:
 ### 7.9 OCR dependencies (implementation guidance)
 - Python deps: `pytesseract`, `pillow`, `pdf2image`
 - System deps (Ubuntu): `tesseract-ocr`, `tesseract-ocr-ara`, `poppler-utils`
+- OCR workers default to CPU core count at runtime (auto-detected)
 
 ## 8. INCREMENT 4 SPEC — User Labels (“Training”) + Similarity-Based Classification
 ### 8.1 Scope (MUST implement)
@@ -444,6 +445,7 @@ Notes:
     naming_template TEXT
     )
   - label_examples(example_id TEXT PRIMARY KEY, label_id TEXT, file_id TEXT, filename TEXT, created_at TEXT)
+    - file_id must be unique (a file may be attached to only one label)
   - label_example_features(example_id TEXT PRIMARY KEY, ocr_text TEXT, embedding_json TEXT, token_fingerprint TEXT, updated_at TEXT)
   - file_label_assignments(job_id TEXT, file_id TEXT, label_id TEXT, score REAL, status TEXT, updated_at TEXT)
   - file_label_overrides(job_id TEXT, file_id TEXT, label_id TEXT, updated_at TEXT)
@@ -452,6 +454,7 @@ Notes:
 - Job screen:
   - Per file: “Create new label” input + button (adds OCR example to SQLite)
   - Per file: “Classify” dropdown sourced from stored labels
+    - Manual selection persists an override (stored in file_label_overrides)
   - Rename field auto-fills with label name + numbering + extension
   - Button: “Classify files” (runs lexical similarity over OCR text)
 - Labels view (in the same Streamlit app):
@@ -459,7 +462,7 @@ Notes:
   - Add/delete label examples
 
 ### 8.9 Acceptance criteria
-- User can create labels from job files and persist them in `labels.json`
+- User can create labels from job files and persist them in SQLite (`app.db`)
 - Classification assigns labels deterministically using OCR text similarity
 - Rename field auto-fills from label name when classification succeeds
 
