@@ -7,10 +7,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.adapters.embeddings_dummy import DummyEmbeddingsAdapter
+from app.adapters.embeddings_openai import OpenAIEmbeddingsAdapter
 from app.adapters.google_drive_adapter import GoogleDriveAdapter
 from app.adapters.ocr_tesseract_adapter import TesseractOCRAdapter
 from app.adapters.sqlite_storage import SQLiteStorage
+from app.settings import EMBEDDINGS_MODEL, OPENAI_API_KEY, OPENAI_BASE_URL
+from app.domain.similarity import normalize_text_to_tokens
 from app.services.label_service import LabelService
 
 
@@ -68,7 +70,11 @@ def main() -> None:
     storage = SQLiteStorage(str(sqlite_path))
     drive = GoogleDriveAdapter(token)
     ocr = TesseractOCRAdapter()
-    embeddings = DummyEmbeddingsAdapter()
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required in .env for embeddings")
+    embeddings = OpenAIEmbeddingsAdapter(
+        api_key=OPENAI_API_KEY, model=EMBEDDINGS_MODEL, base_url=OPENAI_BASE_URL
+    )
     label_service = LabelService(drive=drive, ocr=ocr, storage=storage, embeddings=embeddings)
 
     rows = _load_rows(csv_path)
@@ -99,9 +105,17 @@ def main() -> None:
         ocr_result = ocr.extract_text(file_bytes)
         storage.save_ocr_result("import", file_id, ocr_result)
         print("[label] attaching example to label")
-        storage.attach_label_example(label_id, file_id, filename or file_id)
-        print("[embeddings] processing label examples")
-        label_service.process_examples(label_id, job_id=None)
+        example = storage.attach_label_example(label_id, file_id, filename or file_id)
+        ocr_text = ocr_result.text or ""
+        token_fingerprint = normalize_text_to_tokens(ocr_text) if ocr_text else set()
+        embedding = embeddings.embed_text(ocr_text) if ocr_text else None
+        print("[embeddings] saving example features")
+        storage.save_label_example_features(
+            example.example_id,
+            ocr_text,
+            embedding,
+            token_fingerprint,
+        )
         processed += 1
 
     print(f"Processed {processed} labeled rows; skipped {skipped} rows with no label.")
