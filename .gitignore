@@ -4,7 +4,10 @@ AGENTS.md
 HANDOFF.md
 labels.json
 app.db
+app_new.db
+app_import.db
 ocr_text.txt
+scripts/label_create.csv
 
 # OS/editor
 .DS_Store
