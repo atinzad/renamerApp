@@ -534,6 +534,16 @@ class SQLiteStorage(StoragePort):
         )
         try:
             with self._connect() as conn:
+                existing = conn.execute(
+                    """
+                    SELECT label_id
+                    FROM label_examples
+                    WHERE file_id = ?
+                    """,
+                    (file_id,),
+                ).fetchone()
+                if existing is not None and existing[0] != label_id:
+                    raise RuntimeError("File already attached to a different label.")
                 conn.execute(
                     """
                     INSERT INTO label_examples(example_id, label_id, file_id, filename, created_at)
@@ -1406,6 +1416,12 @@ class SQLiteStorage(StoragePort):
                         filename TEXT,
                         created_at TEXT
                     )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_label_examples_file_id
+                    ON label_examples(file_id)
                     """
                 )
                 conn.execute(
