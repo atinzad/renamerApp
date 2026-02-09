@@ -47,6 +47,28 @@ def _ensure_label(label_service: LabelService, name: str, existing: dict[str, st
     return label.label_id
 
 
+def _truncate_for_embedding(text: str, max_chars: int = 12000) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars]
+
+
+def _has_ocr(storage: SQLiteStorage, file_id: str) -> bool:
+    result = storage.get_ocr_result("import", file_id)
+    return bool(result and result.text and result.text.strip())
+
+
+def _has_embedding(storage: SQLiteStorage, label_id: str, file_id: str) -> bool:
+    examples = storage.list_label_examples(label_id)
+    for example in examples:
+        if example.file_id != file_id:
+            continue
+        features = storage.get_label_example_features(example.example_id)
+        if features and features.get("embedding"):
+            return True
+    return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import labels from CSV and seed a new DB.")
     parser.add_argument("--csv", required=True, help="Path to CSV with file_id,name,Label")
@@ -99,6 +121,10 @@ def main() -> None:
             print(f"[label] using existing label: {label_name}")
         else:
             print(f"[label] created new label: {label_name}")
+        if _has_ocr(storage, file_id) and _has_embedding(storage, label_id, file_id):
+            print("[skip] existing OCR + embeddings found")
+            skipped += 1
+            continue
         print("[ocr] downloading file bytes")
         file_bytes = drive.download_file_bytes(file_id)
         print("[ocr] running OCR")
@@ -107,6 +133,9 @@ def main() -> None:
         print("[label] attaching example to label")
         example = storage.attach_label_example(label_id, file_id, filename or file_id)
         ocr_text = ocr_result.text or ""
+        if ocr_text and len(ocr_text) > 12000:
+            print(f"[embeddings] truncating OCR text from {len(ocr_text)} chars")
+        ocr_text = _truncate_for_embedding(ocr_text)
         token_fingerprint = normalize_text_to_tokens(ocr_text) if ocr_text else set()
         embedding = embeddings.embed_text(ocr_text) if ocr_text else None
         print("[embeddings] saving example features")
