@@ -86,11 +86,21 @@ def main() -> None:
             skipped += 1
             continue
 
+        display_name = filename or file_id
+        print(f"[file] {display_name} ({file_id})")
         label_id = _ensure_label(label_service, label_name, label_id_by_name)
+        if label_id_by_name.get(label_name) == label_id:
+            print(f"[label] using existing label: {label_name}")
+        else:
+            print(f"[label] created new label: {label_name}")
+        print("[ocr] downloading file bytes")
         file_bytes = drive.download_file_bytes(file_id)
+        print("[ocr] running OCR")
         ocr_result = ocr.extract_text(file_bytes)
         storage.save_ocr_result("import", file_id, ocr_result)
+        print("[label] attaching example to label")
         storage.attach_label_example(label_id, file_id, filename or file_id)
+        print("[embeddings] processing label examples")
         label_service.process_examples(label_id, job_id=None)
         processed += 1
 
