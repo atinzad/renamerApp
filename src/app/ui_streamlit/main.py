@@ -4,6 +4,7 @@ import base64
 import http.server
 import json
 import socketserver
+import webbrowser
 import sys
 import tempfile
 import threading
@@ -600,7 +601,7 @@ def _start_oauth_callback_server() -> None:
     def _serve() -> None:
         global _OAUTH_SERVER_STARTED, _OAUTH_ERROR
         try:
-            with socketserver.TCPServer(("localhost", 8080), OAuthHandler) as httpd:
+            with socketserver.TCPServer(("", 8080), OAuthHandler) as httpd:
                 httpd.handle_request()
         except OSError as exc:
             _OAUTH_ERROR = f"OAuth callback server failed to start: {exc}"
@@ -757,7 +758,23 @@ def main() -> None:
             auth_url = _build_auth_url(client_id, _OAUTH_STATE)
             st.session_state["oauth_in_progress"] = True
             st.session_state["oauth_auth_url"] = auth_url
-            st.info("Click the link below to authorize, then return here.")
+            try:
+                opened = webbrowser.open(auth_url, new=2)
+                if opened:
+                    st.info("Browser opened for Google authorization. Return here after approval.")
+                else:
+                    st.info("Open the link below to authorize, then return here.")
+            except Exception:
+                st.info("Open the link below to authorize, then return here.")
+
+    if st.session_state.get("oauth_in_progress"):
+        if st.button("Cancel sign-in"):
+            st.session_state["oauth_in_progress"] = False
+            _clear_oauth_result()
+            _OAUTH_EVENT.clear()
+            _OAUTH_CODE = None
+            _OAUTH_ERROR = None
+            st.info("OAuth sign-in canceled.")
 
     if st.session_state.get("oauth_in_progress") and st.session_state.get("oauth_auth_url"):
         st.markdown(f"[Authorize Google Drive]({st.session_state['oauth_auth_url']})")
@@ -804,50 +821,52 @@ def main() -> None:
                         )
                     _clear_oauth_result()
                 except Exception as exc:
+                    st.session_state["oauth_in_progress"] = False
                     st.error(f"OAuth token exchange failed: {exc}")
                     _clear_oauth_result()
 
-    st.caption("Redirect URL (after consent)")
-    redirect_url = st.text_input(
-        "Redirect URL",
-        help="Paste the full redirect URL after consent to extract the authorization code.",
-    )
-    if st.button("Extract token"):
-        if not redirect_url.strip():
-            st.error("Paste the redirect URL first.")
-        elif not client_id or not client_secret:
-            st.error("Client ID and Client Secret are required for OAuth.")
-        else:
-            manual_code = _extract_code_from_redirect(redirect_url)
-            if not manual_code:
-                st.error("No authorization code found in the redirect URL.")
+    with st.expander("Troubleshooting (manual redirect)", expanded=False):
+        st.caption("Use this only if the local callback flow does not work.")
+        redirect_url = st.text_input(
+            "Redirect URL",
+            help="Paste the full redirect URL after consent to extract the authorization code.",
+        )
+        if st.button("Extract token"):
+            if not redirect_url.strip():
+                st.error("Paste the redirect URL first.")
+            elif not client_id or not client_secret:
+                st.error("Client ID and Client Secret are required for OAuth.")
             else:
-                try:
-                    token_data = _exchange_code_for_token(manual_code, client_id, client_secret)
-                    access_token = token_data.get("access_token", "")
-                    refresh_token = token_data.get("refresh_token")
-                    if not access_token:
-                        raise RuntimeError("OAuth did not return an access token.")
-                    keyring_failed = False
-                    if refresh_token:
-                        keyring_failed = not _set_keyring_value(_KEYRING_REFRESH_TOKEN, refresh_token)
-                    if not _set_keyring_value(_KEYRING_CLIENT_ID, client_id):
-                        keyring_failed = True
-                    if not _set_keyring_value(_KEYRING_CLIENT_SECRET, client_secret):
-                        keyring_failed = True
-                    expires_in = int(token_data.get("expires_in", 3600))
-                    st.session_state["access_token"] = access_token
-                    st.session_state["access_expires_at"] = time.time() + expires_in - 60
-                    st.session_state["manual_access_token"] = access_token
-                    st.session_state["oauth_in_progress"] = False
-                    st.success("Google Drive authorization successful.")
-                    if keyring_failed:
-                        st.warning(
-                            "Saved access token for this session, but the OS keychain is unavailable. "
-                            "You'll need to sign in again next time."
-                        )
-                except Exception as exc:
-                    st.error(f"OAuth token exchange failed: {exc}")
+                manual_code = _extract_code_from_redirect(redirect_url)
+                if not manual_code:
+                    st.error("No authorization code found in the redirect URL.")
+                else:
+                    try:
+                        token_data = _exchange_code_for_token(manual_code, client_id, client_secret)
+                        access_token = token_data.get("access_token", "")
+                        refresh_token = token_data.get("refresh_token")
+                        if not access_token:
+                            raise RuntimeError("OAuth did not return an access token.")
+                        keyring_failed = False
+                        if refresh_token:
+                            keyring_failed = not _set_keyring_value(_KEYRING_REFRESH_TOKEN, refresh_token)
+                        if not _set_keyring_value(_KEYRING_CLIENT_ID, client_id):
+                            keyring_failed = True
+                        if not _set_keyring_value(_KEYRING_CLIENT_SECRET, client_secret):
+                            keyring_failed = True
+                        expires_in = int(token_data.get("expires_in", 3600))
+                        st.session_state["access_token"] = access_token
+                        st.session_state["access_expires_at"] = time.time() + expires_in - 60
+                        st.session_state["manual_access_token"] = access_token
+                        st.session_state["oauth_in_progress"] = False
+                        st.success("Google Drive authorization successful.")
+                        if keyring_failed:
+                            st.warning(
+                                "Saved access token for this session, but the OS keychain is unavailable. "
+                                "You'll need to sign in again next time."
+                            )
+                    except Exception as exc:
+                        st.error(f"OAuth token exchange failed: {exc}")
 
     st.subheader("Manual Access Token (Fallback)")
     access_token = st.text_input(
