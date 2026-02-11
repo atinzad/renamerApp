@@ -11,6 +11,14 @@ from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
 
 _SRC_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _SRC_ROOT.parent
+_JOB_FILE_WIDGET_STATE_KEY = "job_file_widget_state"
+_JOB_FILE_WIDGET_PREFIXES = (
+    "file_expander_",
+    "preview_toggle_",
+    "edit_",
+    "new_label_",
+    "clear_label_",
+)
 
 
 def _init_state() -> None:
@@ -31,6 +39,25 @@ def _init_state() -> None:
     st.session_state.setdefault("ocr_ready", False)
     st.session_state.setdefault("label_selections", {})
     st.session_state.setdefault("classification_results", {})
+    st.session_state.setdefault(_JOB_FILE_WIDGET_STATE_KEY, {})
+
+
+def _persist_job_file_widget_state() -> None:
+    snapshot: dict[str, object] = st.session_state.setdefault(
+        _JOB_FILE_WIDGET_STATE_KEY, {}
+    )
+    for key in list(st.session_state.keys()):
+        if key.startswith(_JOB_FILE_WIDGET_PREFIXES):
+            snapshot[key] = st.session_state[key]
+
+
+def _restore_job_file_widget_state() -> None:
+    snapshot = st.session_state.get(_JOB_FILE_WIDGET_STATE_KEY, {})
+    if not isinstance(snapshot, dict):
+        return
+    for key, value in snapshot.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 def _load_env_file(path: Path) -> dict[str, str]:

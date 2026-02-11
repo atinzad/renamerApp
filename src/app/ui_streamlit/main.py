@@ -33,7 +33,9 @@ from app.ui_streamlit.helpers import (
     _load_labels_json_readonly,
     _ocr_text_to_example,
     _parse_extraction_payload,
+    _persist_job_file_widget_state,
     _render_preview_plan,
+    _restore_job_file_widget_state,
     _trigger_rerun,
 )
 from app.ui_streamlit.auth import ensure_access_token, render_auth_controls
@@ -82,8 +84,11 @@ def main() -> None:
     sqlite_path = st.text_input("SQLite Path", value="./app.db")
 
     if view == "Labels":
+        _persist_job_file_widget_state()
         render_labels_view("", sqlite_path, _get_services)
         return
+
+    _restore_job_file_widget_state()
 
     auth_inputs = render_auth_controls(env_values)
     client_id = auth_inputs.client_id
@@ -333,6 +338,8 @@ def main() -> None:
         current_selections = dict(label_selections)
         ocr_status: dict[str, dict[str, bool]] = {}
         file_timings: dict[str, dict[str, int | None]] = {}
+        stored_classification_labels: dict[str, str] = {}
+        extraction_done: dict[str, bool] = {}
         if storage and job_id:
             for file_ref in files:
                 ocr_result = storage.get_ocr_result(job_id, file_ref.file_id)
@@ -353,15 +360,44 @@ def main() -> None:
                     "classify_ms": getattr(timings, "classify_ms", None) if timings else None,
                     "extract_ms": getattr(timings, "extract_ms", None) if timings else None,
                 }
+                try:
+                    assignment = storage.get_file_label_assignment(job_id, file_ref.file_id)
+                except Exception:
+                    assignment = None
+                if assignment and assignment.label_id:
+                    stored_classification_labels[file_ref.file_id] = label_name_by_id.get(
+                        assignment.label_id, assignment.label_id
+                    )
+                try:
+                    extraction_done[file_ref.file_id] = bool(
+                        storage.get_extraction(job_id, file_ref.file_id)
+                    )
+                except Exception:
+                    extraction_done[file_ref.file_id] = False
         for file_ref in files:
             badges: list[str] = []
+            progress: list[str] = []
             status = ocr_status.get(file_ref.file_id)
             if status:
-                if not status.get("has_ocr"):
+                if status.get("has_ocr"):
+                    progress.append("OCR done")
+                else:
                     badges.append("NO OCR")
-                elif not status.get("has_tokens"):
+                if status.get("has_ocr") and not status.get("has_tokens"):
                     badges.append("NO TOKENS")
-            badge_text = f" [{' | '.join(badges)}]" if badges else ""
+            classification_label = current_selections.get(file_ref.file_id)
+            if not classification_label:
+                classification_label = stored_classification_labels.get(file_ref.file_id)
+            if not classification_label:
+                result = classification_results.get(file_ref.file_id)
+                if result and result.get("label"):
+                    classification_label = str(result["label"])
+            if classification_label:
+                progress.append(f"Classification {classification_label}")
+            if extraction_done.get(file_ref.file_id):
+                progress.append("Extraction done")
+            status_parts = progress + badges
+            badge_text = f" [{' | '.join(status_parts)}]" if status_parts else ""
             expander_key = f"file_expander_{file_ref.file_id}"
             st.markdown(f"**{file_ref.name}**{badge_text}")
             st.caption(f"{file_ref.file_id} • {file_ref.mime_type}")
@@ -846,6 +882,7 @@ def main() -> None:
                         else:
                             st.caption("Preview loads on demand to keep the UI responsive.")
         st.session_state["label_selections"] = current_selections
+        _persist_job_file_widget_state()
     else:
         edits = {}
 
