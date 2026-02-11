@@ -32,7 +32,12 @@ class SchemaBuilderService:
             label_id, instructions
         )
 
-    def build_from_ocr(self, label_id: str, ocr_text: str) -> tuple[dict, str]:
+    def build_from_ocr(
+        self,
+        label_id: str,
+        ocr_text: str,
+        guidance_override: str | None = None,
+    ) -> tuple[dict, str]:
         if not ocr_text.strip():
             raise ValueError("OCR text is required.")
         schema_request = {
@@ -56,6 +61,13 @@ class SchemaBuilderService:
             "values on a line followed by a label on the next line prefixed by ':'. Infer field names "
             "from the Arabic label lines when present."
         )
+        user_guidance = (guidance_override or "").strip()
+        guidance_prefix = ""
+        if user_guidance:
+            guidance_prefix = (
+                "Additional user guidance (treat as constraints unless contradicted by OCR): "
+                f"{user_guidance}\n\n"
+            )
         refine_guidance = (
             "Review the proposed schema and refine it using the OCR text. "
             "Array fields must use plural names. If a field name is singular, its type must be string. "
@@ -73,7 +85,9 @@ class SchemaBuilderService:
                 + ". "
             )
         schema, instructions = self._attempt_llm_schema(
-            schema_request, ocr_text, f"{guidance} {detected_hint}"
+            schema_request,
+            ocr_text,
+            f"{guidance_prefix}{guidance} {detected_hint}",
         )
         if schema is None:
             schema, instructions = self._fallback_schema(ocr_text)
@@ -87,7 +101,7 @@ class SchemaBuilderService:
         schema, _ = self._attempt_llm_schema(
             schema_request,
             refinement_payload,
-            f"{refine_guidance} {detected_hint}",
+            f"{guidance_prefix}{refine_guidance} {detected_hint}",
         )
         schema = _sanitize_schema(schema or {}, max_fields=15)
         if _count_array_fields(schema) > 3:
@@ -95,7 +109,9 @@ class SchemaBuilderService:
                 f"{guidance} Avoid arrays unless the OCR clearly lists multiple entries."
             )
             schema, instructions = self._attempt_llm_schema(
-                schema_request, ocr_text, f"{retry_guidance} {detected_hint}"
+                schema_request,
+                ocr_text,
+                f"{guidance_prefix}{retry_guidance} {detected_hint}",
             )
             if schema is None:
                 schema, instructions = self._fallback_schema(ocr_text)
@@ -106,7 +122,9 @@ class SchemaBuilderService:
                 "Avoid noisy OCR artifacts and make reasonable assumptions about core fields."
             )
             schema, instructions = self._attempt_llm_schema(
-                schema_request, ocr_text, f"{retry_guidance} {detected_hint}"
+                schema_request,
+                ocr_text,
+                f"{guidance_prefix}{retry_guidance} {detected_hint}",
             )
             if schema is None:
                 schema, instructions = self._fallback_schema(ocr_text)

@@ -120,11 +120,11 @@ def render_labels_view(
                             st.error("No OCR examples available for this label.")
                         else:
                             combined = "\n\n".join(ocr_texts)
-                            if schema_hint.strip():
-                                combined = f"{schema_hint.strip()}\n\n{combined}"
                             with st.spinner("Generating schema..."):
                                 services["schema_builder_service"].build_from_ocr(
-                                    label.label_id, combined
+                                    label.label_id,
+                                    combined,
+                                    schema_hint,
                                 )
                             st.success("Schema generated from examples.")
                             st.session_state[refresh_schema_key] = True
