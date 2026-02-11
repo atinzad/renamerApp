@@ -10,7 +10,7 @@ def test_classify_skips_when_override_exists() -> None:
         FileRef(file_id="file-1", name="a.jpg", mime_type="image/jpeg", sort_index=0)
     ]
     storage.list_labels.return_value = []
-    storage.get_file_label_override.return_value = {"label_id": "label-1"}
+    storage.get_file_label_override.return_value = "label-1"
     service = LabelClassificationService(embeddings=Mock(), storage=storage)
 
     service.classify_job_files("job-1")

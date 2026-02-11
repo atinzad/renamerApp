@@ -59,7 +59,7 @@ class LabelClassificationService:
         if override is not None:
             self._save_timing(job_id, file_id, started)
             return {
-                "label_id": override.get("label_id"),
+                "label_id": override,
                 "score": 0.0,
                 "status": "OVERRIDDEN",
                 "method": None,

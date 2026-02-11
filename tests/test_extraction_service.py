@@ -36,6 +36,6 @@ def test_extraction_service_stores_fields(tmp_path) -> None:
     service.extract_fields_for_job(job.job_id)
     extraction = storage.get_extraction(job.job_id, "file-1")
     assert extraction is not None
-    payload = json.loads(extraction["fields_json"])
+    payload = json.loads(extraction.fields_json or "{}")
     assert payload["fields"]["civil_id"] == "123"
     assert payload["needs_review"] is False

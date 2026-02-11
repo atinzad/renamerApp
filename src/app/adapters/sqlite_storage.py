@@ -8,10 +8,15 @@ from uuid import uuid4
 from app.domain.doc_types import DocType, DocTypeClassification, signals_from_json, signals_to_json
 from app.domain.labels import Label, LabelExample
 from app.domain.models import (
+    AppliedRename,
+    ExtractionRecord,
+    FileLabelOverride,
     FileRef,
     FileTimingRecord,
     Job,
     JobFileRecord,
+    LabelAssignment,
+    LLMLabelClassification,
     OCRResult,
     RenameOp,
     UndoLog,
@@ -180,7 +185,7 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to save applied renames") from exc
 
-    def list_applied_renames(self, job_id: str) -> list[dict]:
+    def list_applied_renames(self, job_id: str) -> list[AppliedRename]:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
@@ -193,12 +198,13 @@ class SQLiteStorage(StoragePort):
                     (job_id,),
                 ).fetchall()
             return [
-                {
-                    "file_id": row[0],
-                    "old_name": row[1],
-                    "new_name": row[2],
-                    "applied_at": row[3],
-                }
+                AppliedRename(
+                    job_id=job_id,
+                    file_id=row[0],
+                    old_name=row[1],
+                    new_name=row[2],
+                    applied_at=row[3],
+                )
                 for row in rows
             ]
         except sqlite3.Error as exc:
@@ -740,7 +746,7 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to upsert label assignment") from exc
 
-    def get_file_label_assignment(self, job_id: str, file_id: str) -> dict | None:
+    def get_file_label_assignment(self, job_id: str, file_id: str) -> LabelAssignment | None:
         try:
             with self._connect() as conn:
                 row = conn.execute(
@@ -753,18 +759,18 @@ class SQLiteStorage(StoragePort):
                 ).fetchone()
             if row is None:
                 return None
-            return {
-                "job_id": row[0],
-                "file_id": row[1],
-                "label_id": row[2],
-                "score": row[3],
-                "status": row[4],
-                "updated_at": row[5],
-            }
+            return LabelAssignment(
+                job_id=row[0],
+                file_id=row[1],
+                label_id=row[2],
+                score=float(row[3] if row[3] is not None else 0.0),
+                status=row[4],
+                updated_at=row[5],
+            )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch label assignment") from exc
 
-    def list_file_label_assignments(self, job_id: str) -> list[dict]:
+    def list_file_label_assignments(self, job_id: str) -> list[LabelAssignment]:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
@@ -777,14 +783,14 @@ class SQLiteStorage(StoragePort):
                     (job_id,),
                 ).fetchall()
             return [
-                {
-                    "job_id": row[0],
-                    "file_id": row[1],
-                    "label_id": row[2],
-                    "score": row[3],
-                    "status": row[4],
-                    "updated_at": row[5],
-                }
+                LabelAssignment(
+                    job_id=row[0],
+                    file_id=row[1],
+                    label_id=row[2],
+                    score=float(row[3] if row[3] is not None else 0.0),
+                    status=row[4],
+                    updated_at=row[5],
+                )
                 for row in rows
             ]
         except sqlite3.Error as exc:
@@ -810,12 +816,12 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to upsert label override") from exc
 
-    def get_file_label_override(self, job_id: str, file_id: str) -> dict | None:
+    def get_file_label_override(self, job_id: str, file_id: str) -> str | None:
         try:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT job_id, file_id, label_id, updated_at
+                    SELECT label_id
                     FROM file_label_overrides
                     WHERE job_id = ? AND file_id = ?
                     """,
@@ -823,34 +829,29 @@ class SQLiteStorage(StoragePort):
                 ).fetchone()
             if row is None:
                 return None
-            return {
-                "job_id": row[0],
-                "file_id": row[1],
-                "label_id": row[2],
-                "updated_at": row[3],
-            }
+            return row[0]
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch label override") from exc
 
-    def list_file_label_overrides(self, job_id: str) -> list[dict]:
+    def list_file_label_overrides(self, job_id: str) -> list[FileLabelOverride]:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
                     SELECT job_id, file_id, label_id, updated_at
                     FROM file_label_overrides
-                    WHERE job_id = ?
+                    WHERE job_id = ? AND label_id IS NOT NULL
                     ORDER BY file_id ASC
                     """,
                     (job_id,),
                 ).fetchall()
             return [
-                {
-                    "job_id": row[0],
-                    "file_id": row[1],
-                    "label_id": row[2],
-                    "updated_at": row[3],
-                }
+                FileLabelOverride(
+                    job_id=row[0],
+                    file_id=row[1],
+                    label_id=row[2],
+                    updated_at=row[3],
+                )
                 for row in rows
             ]
         except sqlite3.Error as exc:
@@ -1077,12 +1078,12 @@ class SQLiteStorage(StoragePort):
 
     def get_llm_label_classification(
         self, job_id: str, file_id: str
-    ) -> tuple[str | None, float, list[str]] | None:
+    ) -> LLMLabelClassification | None:
         try:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT label_name, confidence, signals_json
+                    SELECT label_name, confidence, signals_json, updated_at
                     FROM llm_label_classifications
                     WHERE job_id = ? AND file_id = ?
                     """,
@@ -1090,31 +1091,42 @@ class SQLiteStorage(StoragePort):
                 ).fetchone()
             if row is None:
                 return None
-            return (
-                row[0],
-                row[1],
-                signals_from_json(row[2]),
+            return LLMLabelClassification(
+                job_id=job_id,
+                file_id=file_id,
+                label_name=row[0],
+                confidence=float(row[1] if row[1] is not None else 0.0),
+                signals=signals_from_json(row[2]),
+                updated_at=row[3],
             )
         except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError("Failed to fetch LLM label classification") from exc
 
     def list_llm_label_classifications(
         self, job_id: str
-    ) -> dict[str, tuple[str | None, float, list[str]]]:
+    ) -> dict[str, LLMLabelClassification]:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT file_id, label_name, confidence, signals_json
+                    SELECT file_id, label_name, confidence, signals_json, updated_at
                     FROM llm_label_classifications
                     WHERE job_id = ?
                     ORDER BY file_id ASC
                     """,
                     (job_id,),
                 ).fetchall()
-            results: dict[str, tuple[str | None, float, list[str]]] = {}
+            results: dict[str, LLMLabelClassification] = {}
             for row in rows:
-                results[row[0]] = (row[1], row[2], signals_from_json(row[3]))
+                file_id = row[0]
+                results[file_id] = LLMLabelClassification(
+                    job_id=job_id,
+                    file_id=file_id,
+                    label_name=row[1],
+                    confidence=float(row[2] if row[2] is not None else 0.0),
+                    signals=signals_from_json(row[3]),
+                    updated_at=row[4],
+                )
             return results
         except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError("Failed to list LLM label classifications") from exc
@@ -1213,7 +1225,7 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to save extraction") from exc
 
-    def get_extraction(self, job_id: str, file_id: str) -> dict | None:
+    def get_extraction(self, job_id: str, file_id: str) -> ExtractionRecord | None:
         try:
             with self._connect() as conn:
                 row = conn.execute(
@@ -1226,32 +1238,16 @@ class SQLiteStorage(StoragePort):
                 ).fetchone()
             if row is None:
                 return None
-            return {
-                "schema_json": row[0],
-                "fields_json": row[1],
-                "confidences_json": row[2],
-                "updated_at": row[3],
-            }
+            return ExtractionRecord(
+                job_id=job_id,
+                file_id=file_id,
+                schema_json=row[0],
+                fields_json=row[1],
+                confidences_json=row[2],
+                updated_at=row[3],
+            )
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch extraction") from exc
-
-    def get_file_label_override_id(self, job_id: str, file_id: str) -> str | None:
-        override = self.get_file_label_override(job_id, file_id)
-        if override is None:
-            return None
-        return override.get("label_id")
-
-    def get_file_label_assignment_summary(
-        self, job_id: str, file_id: str
-    ) -> tuple[str | None, float, str] | None:
-        assignment = self.get_file_label_assignment(job_id, file_id)
-        if assignment is None:
-            return None
-        return (
-            assignment.get("label_id"),
-            float(assignment.get("score", 0.0)),
-            str(assignment.get("status", "")),
-        )
 
     def update_label_extraction_schema(
         self, label_id: str, extraction_schema_json: str

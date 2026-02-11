@@ -68,6 +68,11 @@ def render_report_v2(model: FinalReportModel) -> str:
 
 
 def _schema_keys(schema: dict[str, Any]) -> list[str]:
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        keys = list(properties.keys())
+        if keys:
+            return keys
     keys = list(schema.keys())
     return keys if keys else []
 

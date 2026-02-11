@@ -70,12 +70,12 @@ class ExtractionService:
         warnings: list[str] = []
         instructions = ""
         override = self._storage.get_file_label_override(job_id, file_id)
-        if override and override.get("label_id"):
-            label_id = override["label_id"]
+        if override:
+            label_id = override
         else:
             assignment = self._storage.get_file_label_assignment(job_id, file_id)
-            if assignment and assignment.get("label_id"):
-                label_id = assignment["label_id"]
+            if assignment and assignment.label_id:
+                label_id = assignment.label_id
         if label_id:
             label = self._storage.get_label(label_id)
             if label and label.extraction_schema_json:

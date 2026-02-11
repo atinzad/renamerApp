@@ -7,6 +7,7 @@ from app.domain.labels import Label, LabelExample
 from app.domain.models import (
     AppliedRename,
     ExtractionRecord,
+    FileLabelOverride,
     FileRef,
     FileTimingRecord,
     Job,
@@ -151,7 +152,7 @@ class StoragePort(Protocol):
     ) -> LabelAssignment | None:
         """Return a classification assignment for a job file."""
 
-    def list_file_label_assignments(self, job_id: str) -> list[dict]:
+    def list_file_label_assignments(self, job_id: str) -> list[LabelAssignment]:
         """Return all classification assignments for a job."""
 
     def upsert_file_label_override(
@@ -162,7 +163,7 @@ class StoragePort(Protocol):
     def get_file_label_override(self, job_id: str, file_id: str) -> str | None:
         """Return a manual label override label_id, if any."""
 
-    def list_file_label_overrides(self, job_id: str) -> list[dict]:
+    def list_file_label_overrides(self, job_id: str) -> list[FileLabelOverride]:
         """Return all label overrides for a job."""
 
     def bulk_insert_label_presets(self, labels: list[dict]) -> None:
@@ -219,7 +220,7 @@ class StoragePort(Protocol):
 
     def list_llm_label_classifications(
         self, job_id: str
-    ) -> dict[str, tuple[str | None, float, list[str]]]:
+    ) -> dict[str, LLMLabelClassification]:
         """Return LLM label fallback classifications for a job keyed by file_id."""
 
     def set_llm_label_override(
@@ -249,14 +250,6 @@ class StoragePort(Protocol):
 
     def get_extraction(self, job_id: str, file_id: str) -> ExtractionRecord | None:
         """Return extraction output for a job file."""
-
-    def get_file_label_override_id(self, job_id: str, file_id: str) -> str | None:
-        """Return the override label_id for a job file, if any."""
-
-    def get_file_label_assignment_summary(
-        self, job_id: str, file_id: str
-    ) -> tuple[str | None, float, str] | None:
-        """Return (label_id, score, status) for a job file."""
 
     def update_label_extraction_schema(
         self, label_id: str, extraction_schema_json: str

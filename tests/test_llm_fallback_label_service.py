@@ -90,7 +90,10 @@ def test_fallback_service_stores_results(tmp_path, monkeypatch) -> None:
     _set_llm_config(monkeypatch, provider="openai", api_key="key")
     service.classify_unlabeled_files(job_id)
     stored = storage.get_llm_label_classification(job_id, "file-1")
-    assert stored == ("INVOICE", 0.9, ["OK"])
+    assert stored is not None
+    assert stored.label_name == "INVOICE"
+    assert stored.confidence == 0.9
+    assert stored.signals == ["OK"]
 
 
 def test_fallback_service_skips_non_no_match(tmp_path, monkeypatch) -> None:

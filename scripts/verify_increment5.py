@@ -48,7 +48,9 @@ def main() -> None:
     stored = storage.get_llm_label_classification(job.job_id, first.file_id)
     if stored is None:
         raise SystemExit("No LLM fallback classification stored.")
-    label_name, confidence, signals = stored
+    label_name = stored.label_name
+    confidence = stored.confidence
+    signals = stored.signals
     labels = storage.list_labels(include_inactive=False)
     allowlist = {label.name for label in labels if label.llm}
     if label_name is not None and label_name not in allowlist:

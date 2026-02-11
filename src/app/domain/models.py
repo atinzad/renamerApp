@@ -55,6 +55,15 @@ class LabelAssignment:
     label_id: str | None
     status: str
     score: float
+    updated_at: str | None = None
+
+
+@dataclass
+class FileLabelOverride:
+    job_id: str
+    file_id: str
+    label_id: str | None
+    updated_at: str | None = None
 
 
 @dataclass
@@ -63,6 +72,8 @@ class LLMLabelClassification:
     file_id: str
     label_name: str | None
     confidence: float
+    signals: list[str]
+    updated_at: str | None = None
 
 
 @dataclass
@@ -71,6 +82,8 @@ class ExtractionRecord:
     file_id: str
     schema_json: str | None
     fields_json: str | None
+    confidences_json: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass

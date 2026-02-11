@@ -224,7 +224,6 @@ class OpenAILLMAdapter(LLMPort):
             return None
         return response.json()
 
-    @staticmethod
     def _parse_fields_response(self, payload: dict) -> dict:
         content = self._extract_output_text(payload)
         data = self._parse_json_from_text(content)

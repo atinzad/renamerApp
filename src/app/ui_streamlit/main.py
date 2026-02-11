@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import base64
-import http.server
-import json
-import socketserver
-import webbrowser
 import sys
-import tempfile
-import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-import keyring
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
@@ -29,477 +20,26 @@ if str(_SRC_ROOT) not in sys.path:
 load_dotenv(_REPO_ROOT / ".env", override=False)
 
 from app.container import build_services
-from app.domain.label_fallback import list_fallback_candidates, normalize_labels_llm
-from app.domain.labels import AMBIGUOUS, MATCHED, NO_MATCH, decide_match
-from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
+from app.domain.label_fallback import list_fallback_candidates
+from app.domain.labels import AMBIGUOUS, MATCHED, NO_MATCH
+from app.domain.models import LLMLabelClassification
+from app.domain.similarity import normalize_text_to_tokens
+from app.ui_streamlit.helpers import (
+    _build_suggested_names,
+    _classify_with_labels,
+    _init_state,
+    _load_env_file,
+    _load_labels_from_storage,
+    _load_labels_json_readonly,
+    _ocr_text_to_example,
+    _parse_extraction_payload,
+    _render_preview_plan,
+    _trigger_rerun,
+)
+from app.ui_streamlit.auth import ensure_access_token, render_auth_controls
+from app.ui_streamlit.labels_view import render_labels_view
 
-_OAUTH_SCOPE = "https://www.googleapis.com/auth/drive"
-_REDIRECT_URI = "http://localhost:8080/"
-_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
-_KEYRING_SERVICE = "renamerapp-google-drive"
-_KEYRING_REFRESH_TOKEN = "refresh_token"
-_KEYRING_CLIENT_ID = "client_id"
-_KEYRING_CLIENT_SECRET = "client_secret"
-_OAUTH_STATE: str | None = None
-_OAUTH_CODE: str | None = None
-_OAUTH_ERROR: str | None = None
-_OAUTH_EVENT = threading.Event()
-_OAUTH_SERVER_STARTED = False
-_OAUTH_RESULT_FILE = Path(tempfile.gettempdir()) / "renamerapp_oauth_result.json"
 _PREVIEW_MAX_BYTES = 10 * 1024 * 1024
-
-
-def _init_state() -> None:
-    st.session_state.setdefault("services", None)
-    st.session_state.setdefault("services_access_token", None)
-    st.session_state.setdefault("services_sqlite_path", None)
-    st.session_state.setdefault("job_id", None)
-    st.session_state.setdefault("files", [])
-    st.session_state.setdefault("preview_ops", [])
-    st.session_state.setdefault("access_token", None)
-    st.session_state.setdefault("access_expires_at", 0)
-    st.session_state.setdefault("oauth_in_progress", False)
-    st.session_state.setdefault("oauth_auth_url", None)
-    st.session_state.setdefault("oauth_state", None)
-    st.session_state.setdefault("manual_access_token", "")
-    st.session_state.setdefault("report_preview", "")
-    st.session_state.setdefault("ocr_refresh_token", "init")
-    st.session_state.setdefault("ocr_ready", False)
-    st.session_state.setdefault("label_selections", {})
-    st.session_state.setdefault("classification_results", {})
-
-
-def _load_env_file(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("\"'")  # basic quote trimming
-        if key:
-            values[key] = value
-    return values
-
-
-def _trigger_rerun() -> None:
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
-
-
-def _build_suggested_names(
-    files: list, selections: dict[str, str | None]
-) -> dict[str, str]:
-    label_to_files: dict[str, list] = {}
-    for file_ref in files:
-        label = selections.get(file_ref.file_id)
-        if not label:
-            continue
-        label_to_files.setdefault(label, []).append(file_ref)
-
-    suggestions: dict[str, str] = {}
-    for label, label_files in label_to_files.items():
-        total = len(label_files)
-        for idx, file_ref in enumerate(label_files, start=1):
-            suffix = f"_{idx:02d}" if total > 1 else ""
-            extension = Path(file_ref.name).suffix
-            suggestions[file_ref.file_id] = f"{label}{suffix}{extension}"
-    return suggestions
-
-
-def _render_preview_plan(
-    container: st.delta_generator.DeltaGenerator,
-    ops: list,
-    notice: str | None = None,
-) -> None:
-    with container:
-        if ops:
-            st.subheader("Preview Plan")
-            st.table(
-                [
-                    {
-                        "file_id": op.file_id,
-                        "old_name": op.old_name,
-                        "new_name": op.new_name,
-                    }
-                    for op in ops
-                ]
-            )
-        elif notice:
-            st.info(notice)
-
-
-def _classify_with_labels(labels: list[dict], ocr_text: str) -> tuple[str | None, float, str]:
-    tokens = normalize_text_to_tokens(ocr_text)
-    if not tokens or not labels:
-        return None, 0.0, NO_MATCH
-    label_scores: list[tuple[str, float]] = []
-    for label in labels:
-        name = label.get("name")
-        examples = label.get("examples", [])
-        if not name or not examples:
-            continue
-        best_score = None
-        for example_text in examples:
-            example_tokens = normalize_text_to_tokens(example_text)
-            score = jaccard_similarity(tokens, example_tokens)
-            if best_score is None or score > best_score:
-                best_score = score
-        if best_score is not None:
-            label_scores.append((name, best_score))
-    if not label_scores:
-        return None, 0.0, NO_MATCH
-    label_scores.sort(key=lambda item: item[1], reverse=True)
-    best_label, best_score = label_scores[0]
-    second_score = label_scores[1][1] if len(label_scores) > 1 else None
-    status, _ = decide_match(best_label, best_score, second_score, 0.35, 0.02)
-    return best_label, best_score, status
-
-
-def _load_labels_from_storage(storage) -> tuple[list[dict], dict[str, str], bool]:
-    labels = storage.list_labels(include_inactive=False)
-    if not labels:
-        fallback = _load_labels_json_readonly()
-        return fallback, {}, True
-    label_map = {label.name: label.label_id for label in labels}
-    label_examples: dict[str, list[str]] = {label.label_id: [] for label in labels}
-    for label in labels:
-        examples = storage.list_label_examples(label.label_id)
-        for example in examples:
-            features = storage.get_label_example_features(example.example_id)
-            if features and features.get("ocr_text"):
-                label_examples[label.label_id].append(features["ocr_text"])
-    labels_data = [
-        {
-            "label_id": label.label_id,
-            "name": label.name,
-            "llm": label.llm,
-            "examples": label_examples.get(label.label_id, []),
-        }
-        for label in labels
-    ]
-    return labels_data, label_map, False
-
-
-def _load_labels_json_readonly() -> list[dict]:
-    path = _REPO_ROOT / "labels.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-    except json.JSONDecodeError:
-        return []
-    if isinstance(data, list):
-        return normalize_labels_llm(data)
-    return []
-
-
-def _parse_extraction_payload(extraction: dict | None) -> dict[str, object]:
-    if not extraction:
-        return {
-            "fields": {},
-            "confidences": {},
-            "warnings": [],
-            "needs_review": False,
-        }
-    fields_payload: dict[str, object] = {}
-    confidences_payload: dict[str, object] = {}
-    warnings: list[str] = []
-    needs_review = False
-    fields_json = extraction.get("fields_json") or ""
-    if fields_json:
-        try:
-            parsed = json.loads(fields_json)
-        except json.JSONDecodeError:
-            parsed = {}
-        if isinstance(parsed, dict):
-            raw_fields = parsed.get("fields", parsed)
-            if isinstance(raw_fields, dict):
-                fields_payload = raw_fields
-            warnings_value = parsed.get("warnings", [])
-            if isinstance(warnings_value, list):
-                warnings = [str(item) for item in warnings_value]
-            needs_review = bool(parsed.get("needs_review", False))
-    confidences_json = extraction.get("confidences_json") or ""
-    if confidences_json:
-        try:
-            parsed_confidences = json.loads(confidences_json)
-        except json.JSONDecodeError:
-            parsed_confidences = {}
-        if isinstance(parsed_confidences, dict):
-            confidences_payload = parsed_confidences
-    return {
-        "fields": fields_payload,
-        "confidences": confidences_payload,
-        "warnings": warnings,
-        "needs_review": needs_review,
-    }
-
-
-def _ocr_text_to_example(ocr_text: str) -> dict:
-    example: dict[str, object] = {}
-    for raw_line in ocr_text.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if key in example:
-            existing = example[key]
-            if isinstance(existing, list):
-                existing.append(value)
-            else:
-                example[key] = [existing, value]
-        else:
-            example[key] = value
-    return example
-
-
-def _render_labels_view(access_token: str, sqlite_path: str) -> None:
-    st.subheader("Labels")
-    try:
-        services = _get_services(access_token, sqlite_path)
-        labels = services["storage"].list_labels(include_inactive=True)
-    except Exception as exc:
-        st.error(f"Failed to load labels: {exc}")
-        return
-    if not labels:
-        st.info("No labels found in SQLite.")
-        return
-    for label in labels:
-        status = "Active" if label.is_active else "Inactive"
-        with st.expander(f"{label.name} ({status})", expanded=False):
-            schema_key = f"schema_{label.label_id}"
-            refresh_schema_key = f"refresh_schema_{label.label_id}"
-            if st.session_state.get(refresh_schema_key):
-                st.session_state[schema_key] = label.extraction_schema_json or "{}"
-                st.session_state[f"instructions_{label.label_id}"] = (
-                    label.extraction_instructions or ""
-                )
-                st.session_state[f"llm_instruction_{label.label_id}"] = label.llm or ""
-                st.session_state[refresh_schema_key] = False
-            schema_value = st.text_area(
-                "Extraction schema (JSON)",
-                value=label.extraction_schema_json or "{}",
-                key=schema_key,
-                height=200,
-            )
-            if st.button("Save schema", key=f"save_schema_{label.label_id}"):
-                try:
-                    json.loads(schema_value or "{}")
-                except json.JSONDecodeError as exc:
-                    st.error(f"Invalid JSON: {exc}")
-                else:
-                    try:
-                        services["storage"].update_label_extraction_schema(
-                            label.label_id, schema_value.strip()
-                        )
-                        st.success("Schema saved.")
-                    except Exception as exc:
-                        st.error(f"Save failed: {exc}")
-            instructions_key = f"instructions_{label.label_id}"
-            instructions_value = st.text_area(
-                "Extraction instructions",
-                value=label.extraction_instructions or "",
-                key=instructions_key,
-                height=140,
-            )
-            if st.button(
-                "Save instructions",
-                key=f"save_instructions_{label.label_id}",
-            ):
-                try:
-                    services["storage"].update_label_extraction_instructions(
-                        label.label_id, instructions_value.strip()
-                    )
-                    st.success("Instructions saved.")
-                except Exception as exc:
-                    st.error(f"Save failed: {exc}")
-            llm_key = f"llm_instruction_{label.label_id}"
-            llm_value = st.text_area(
-                "LLM label instruction",
-                value=label.llm or "",
-                key=llm_key,
-                height=120,
-            )
-            if st.button(
-                "Save LLM instruction",
-                key=f"save_llm_{label.label_id}",
-            ):
-                try:
-                    services["storage"].update_label_llm(
-                        label.label_id, llm_value.strip()
-                    )
-                    st.success("LLM instruction saved.")
-                except Exception as exc:
-                    st.error(f"Save failed: {exc}")
-            with st.expander("Build schema from examples", expanded=False):
-                st.caption("Uses all stored OCR examples for this label.")
-                schema_hint_key = f"schema_hint_{label.label_id}"
-                schema_hint = st.text_area(
-                    "Optional schema guidance",
-                    value=st.session_state.get(schema_hint_key, ""),
-                    key=schema_hint_key,
-                    height=120,
-                    help="Provide extra context or constraints to guide schema generation.",
-                )
-                if st.button(
-                    "Generate schema",
-                    key=f"generate_schema_{label.label_id}",
-                ):
-                    try:
-                        examples = services["storage"].list_label_examples(label.label_id)
-                        ocr_texts: list[str] = []
-                        for example in examples:
-                            features = services["storage"].get_label_example_features(
-                                example.example_id
-                            )
-                            if features and features.get("ocr_text"):
-                                ocr_texts.append(features["ocr_text"])
-                        if not ocr_texts:
-                            st.error("No OCR examples available for this label.")
-                        else:
-                            combined = "\n\n".join(ocr_texts)
-                            if schema_hint.strip():
-                                combined = f"{schema_hint.strip()}\n\n{combined}"
-                            with st.spinner("Generating schema..."):
-                                services["schema_builder_service"].build_from_ocr(
-                                    label.label_id, combined
-                                )
-                            st.success("Schema generated from examples.")
-                            st.session_state[refresh_schema_key] = True
-                            _trigger_rerun()
-                    except Exception as exc:
-                        st.error(f"Schema generation failed: {exc}")
-            with st.expander("Examples", expanded=False):
-                try:
-                    examples = services["storage"].list_label_examples(label.label_id)
-                except Exception as exc:
-                    st.error(f"Failed to load examples: {exc}")
-                    examples = []
-                if not examples:
-                    st.info("No examples for this label yet.")
-                else:
-                    for example in examples:
-                        features = services["storage"].get_label_example_features(
-                            example.example_id
-                        )
-                        example_key = f"example_{example.example_id}"
-                        st.caption(f"{example.filename} ({example.file_id})")
-                        st.text_area(
-                            "Example OCR text",
-                            value=features.get("ocr_text", "") if features else "",
-                            key=example_key,
-                            height=140,
-                        )
-                        if st.button(
-                            "Delete example",
-                            key=f"delete_example_{example.example_id}",
-                        ):
-                            try:
-                                services["storage"].delete_label_example(
-                                    example.example_id
-                                )
-                                st.success("Example deleted.")
-                                _trigger_rerun()
-                            except Exception as exc:
-                                st.error(f"Failed to delete example: {exc}")
-                    if st.button(
-                        "Save examples",
-                        key=f"save_examples_{label.label_id}",
-                    ):
-                        for example in examples:
-                            example_key = f"example_{example.example_id}"
-                            updated_text = st.session_state.get(example_key, "")
-                            try:
-                                tokens = normalize_text_to_tokens(updated_text or "")
-                                embedding = None
-                                try:
-                                    embedding = services["embeddings"].embed_text(
-                                        updated_text or ""
-                                    )
-                                except Exception:
-                                    embedding = None
-                                services["storage"].save_label_example_features(
-                                    example.example_id,
-                                    updated_text or "",
-                                    embedding,
-                                    tokens,
-                                )
-                            except Exception as exc:
-                                st.error(f"Failed to save example: {exc}")
-                                break
-                        else:
-                            st.success("Examples saved.")
-                st.divider()
-                st.caption("Add example (paste OCR text)")
-                new_example_key = f"new_example_{label.label_id}"
-                new_example_text = st.text_area(
-                    "New example OCR text",
-                    value=st.session_state.get(new_example_key, ""),
-                    key=new_example_key,
-                    height=140,
-                )
-                if st.button(
-                    "Add example",
-                    key=f"add_example_{label.label_id}",
-                ):
-                    if not new_example_text.strip():
-                        st.error("Paste OCR text first.")
-                    else:
-                        try:
-                            example_id = None
-                            file_id = f"manual:{uuid4()}"
-                            filename = "manual_ocr.txt"
-                            example = services["storage"].attach_label_example(
-                                label.label_id,
-                                file_id,
-                                filename,
-                            )
-                            example_id = example.example_id
-                            tokens = normalize_text_to_tokens(new_example_text)
-                            embedding = None
-                            try:
-                                embedding = services["embeddings"].embed_text(
-                                    new_example_text
-                                )
-                            except Exception:
-                                embedding = None
-                            services["storage"].save_label_example_features(
-                                example_id,
-                                new_example_text,
-                                embedding,
-                                tokens,
-                            )
-                            st.session_state[new_example_key] = ""
-                            st.success("Example added.")
-                            _trigger_rerun()
-                        except Exception as exc:
-                            st.error(f"Failed to add example: {exc}")
-            st.divider()
-            confirm_key = f"confirm_delete_{label.label_id}"
-            confirm = st.checkbox(
-                "I understand this will delete the label and its examples.",
-                key=confirm_key,
-            )
-            if st.button("Delete label", key=f"delete_label_{label.label_id}"):
-                if not confirm:
-                    st.error("Confirm label deletion first.")
-                else:
-                    try:
-                        services["storage"].delete_label(label.label_id)
-                        st.success("Label deleted.")
-                        _trigger_rerun()
-                    except Exception as exc:
-                        st.error(f"Failed to delete label: {exc}")
 
 
 def _get_services(access_token: str, sqlite_path: str):
@@ -512,181 +52,6 @@ def _get_services(access_token: str, sqlite_path: str):
         st.session_state["services_access_token"] = access_token
         st.session_state["services_sqlite_path"] = sqlite_path
     return st.session_state["services"]
-
-
-def _get_keyring_value(key: str) -> str | None:
-    try:
-        return keyring.get_password(_KEYRING_SERVICE, key)
-    except Exception:
-        return None
-
-
-def _set_keyring_value(key: str, value: str) -> bool:
-    try:
-        keyring.set_password(_KEYRING_SERVICE, key, value)
-        return True
-    except Exception:
-        return False
-
-
-def _build_auth_url(client_id: str, state: str) -> str:
-    params = {
-        "client_id": client_id,
-        "redirect_uri": _REDIRECT_URI,
-        "response_type": "code",
-        "scope": _OAUTH_SCOPE,
-        "access_type": "offline",
-        "prompt": "consent",
-        "state": state,
-    }
-    query = "&".join(f"{key}={requests.utils.quote(str(value))}" for key, value in params.items())
-    return f"https://accounts.google.com/o/oauth2/v2/auth?{query}"
-
-
-def _write_oauth_result(code: str | None, state: str | None, error: str | None) -> None:
-    try:
-        _OAUTH_RESULT_FILE.write_text(json.dumps({"code": code, "state": state, "error": error}))
-    except Exception:
-        return
-
-
-def _read_oauth_result() -> dict | None:
-    try:
-        if not _OAUTH_RESULT_FILE.exists():
-            return None
-        raw = _OAUTH_RESULT_FILE.read_text()
-        return json.loads(raw)
-    except Exception:
-        return None
-
-
-def _clear_oauth_result() -> None:
-    try:
-        if _OAUTH_RESULT_FILE.exists():
-            _OAUTH_RESULT_FILE.unlink()
-    except Exception:
-        return
-
-
-def _start_oauth_callback_server() -> None:
-    global _OAUTH_SERVER_STARTED
-    if _OAUTH_SERVER_STARTED:
-        return
-
-    class OAuthHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            global _OAUTH_CODE, _OAUTH_ERROR
-            parsed = urlparse(self.path)
-            params = parse_qs(parsed.query)
-            code = params.get("code", [None])[0]
-            state = params.get("state", [None])[0]
-            if not code:
-                _OAUTH_ERROR = "Missing authorization code."
-            elif state != _OAUTH_STATE:
-                _OAUTH_ERROR = "State mismatch."
-            else:
-                _OAUTH_CODE = code
-            _write_oauth_result(_OAUTH_CODE, state, _OAUTH_ERROR)
-            _OAUTH_EVENT.set()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(
-                b"<html><body><h3>Authorization received. You can close this tab.</h3></body></html>"
-            )
-
-        def log_message(self, format: str, *args: object) -> None:
-            return
-
-    def _serve() -> None:
-        global _OAUTH_SERVER_STARTED, _OAUTH_ERROR
-        try:
-            with socketserver.TCPServer(("", 8080), OAuthHandler) as httpd:
-                httpd.handle_request()
-        except OSError as exc:
-            _OAUTH_ERROR = f"OAuth callback server failed to start: {exc}"
-            _OAUTH_EVENT.set()
-        finally:
-            _OAUTH_SERVER_STARTED = False
-
-    thread = threading.Thread(target=_serve, daemon=True)
-    thread.start()
-    _OAUTH_SERVER_STARTED = True
-
-
-def _exchange_code_for_token(code: str, client_id: str, client_secret: str) -> dict:
-    response = requests.post(
-        _OAUTH_TOKEN_URL,
-        data={
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": _REDIRECT_URI,
-            "grant_type": "authorization_code",
-        },
-        timeout=20,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Token exchange failed: {response.status_code} {response.text}")
-    return response.json()
-
-
-def _refresh_access_token(refresh_token: str, client_id: str, client_secret: str) -> dict:
-    response = requests.post(
-        _OAUTH_TOKEN_URL,
-        data={
-            "refresh_token": refresh_token,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "refresh_token",
-        },
-        timeout=20,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Token refresh failed: {response.status_code} {response.text}")
-    return response.json()
-
-
-def _validate_access_token(access_token: str) -> dict:
-    response = requests.get(
-        "https://www.googleapis.com/oauth2/v3/tokeninfo",
-        params={"access_token": access_token},
-        timeout=20,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Token validation failed: {response.status_code} {response.text}")
-    return response.json()
-
-
-def _ensure_access_token(manual_token: str, client_id: str, client_secret: str) -> str:
-    token = st.session_state.get("access_token")
-    expires_at = st.session_state.get("access_expires_at", 0)
-    if token and time.time() < expires_at:
-        return token
-
-    refresh_token = _get_keyring_value(_KEYRING_REFRESH_TOKEN)
-    if refresh_token and client_id and client_secret:
-        token_data = _refresh_access_token(refresh_token, client_id, client_secret)
-        access_token = token_data.get("access_token", "")
-        if not access_token:
-            raise RuntimeError("Refresh token did not return an access token.")
-        expires_in = int(token_data.get("expires_in", 3600))
-        st.session_state["access_token"] = access_token
-        st.session_state["access_expires_at"] = time.time() + expires_in - 60
-        return access_token
-
-    if manual_token:
-        return manual_token
-
-    raise RuntimeError("No access token available. Sign in or paste a manual token.")
-
-
-def _extract_code_from_redirect(value: str) -> str | None:
-    if not value:
-        return None
-    parsed = urlparse(value.strip())
-    params = parse_qs(parsed.query)
-    return params.get("code", [None])[0]
 
 
 def _extract_folder_id(value: str) -> str:
@@ -709,9 +74,6 @@ def _extract_folder_id(value: str) -> str:
 def main() -> None:
     st.title("Google Drive Image Renamer")
     _init_state()
-    global _OAUTH_STATE, _OAUTH_CODE, _OAUTH_ERROR
-    if st.session_state.get("oauth_state"):
-        _OAUTH_STATE = st.session_state.get("oauth_state")
 
     view = st.sidebar.radio("View", ["Job", "Labels"], index=0)
 
@@ -720,170 +82,14 @@ def main() -> None:
     sqlite_path = st.text_input("SQLite Path", value="./app.db")
 
     if view == "Labels":
-        _render_labels_view("", sqlite_path)
+        render_labels_view("", sqlite_path, _get_services)
         return
 
-    stored_client_id = _get_keyring_value(_KEYRING_CLIENT_ID) or ""
-    stored_client_secret = _get_keyring_value(_KEYRING_CLIENT_SECRET) or ""
-    env_client_id = env_values.get("OAUTH_CLIENT_ID", "")
-    env_client_secret = env_values.get("OAUTH_CLIENT_SECRET", "")
-    env_access_token = env_values.get("GOOGLE_DRIVE_ACCESS_TOKEN", "")
-    if env_access_token and not st.session_state.get("manual_access_token"):
-        st.session_state["manual_access_token"] = env_access_token
+    auth_inputs = render_auth_controls(env_values)
+    client_id = auth_inputs.client_id
+    client_secret = auth_inputs.client_secret
+    access_token = auth_inputs.access_token
 
-    st.subheader("Google Login (Recommended)")
-    client_id = st.text_input(
-        "OAuth Client ID",
-        value=env_client_id or stored_client_id,
-        help="Create an OAuth client in Google Cloud Console (OAuth consent + credentials).",
-    )
-    client_secret = st.text_input(
-        "OAuth Client Secret",
-        value=env_client_secret or stored_client_secret,
-        type="password",
-        help="Client secret from the same OAuth client.",
-    )
-    sign_in_clicked = st.button("Sign in with Google")
-    if sign_in_clicked:
-        if not client_id or not client_secret:
-            st.error("Client ID and Client Secret are required for OAuth.")
-        else:
-            _OAUTH_STATE = str(uuid4())
-            st.session_state["oauth_state"] = _OAUTH_STATE
-            _OAUTH_CODE = None
-            _OAUTH_ERROR = None
-            _OAUTH_EVENT.clear()
-            _clear_oauth_result()
-            _start_oauth_callback_server()
-            auth_url = _build_auth_url(client_id, _OAUTH_STATE)
-            st.session_state["oauth_in_progress"] = True
-            st.session_state["oauth_auth_url"] = auth_url
-            try:
-                opened = webbrowser.open(auth_url, new=2)
-                if opened:
-                    st.info("Browser opened for Google authorization. Return here after approval.")
-                else:
-                    st.info("Open the link below to authorize, then return here.")
-            except Exception:
-                st.info("Open the link below to authorize, then return here.")
-
-    if st.session_state.get("oauth_in_progress"):
-        if st.button("Cancel sign-in"):
-            st.session_state["oauth_in_progress"] = False
-            _clear_oauth_result()
-            _OAUTH_EVENT.clear()
-            _OAUTH_CODE = None
-            _OAUTH_ERROR = None
-            st.info("OAuth sign-in canceled.")
-
-    if st.session_state.get("oauth_in_progress") and st.session_state.get("oauth_auth_url"):
-        st.markdown(f"[Authorize Google Drive]({st.session_state['oauth_auth_url']})")
-        oauth_result = _read_oauth_result()
-        if oauth_result and not _OAUTH_EVENT.is_set():
-            _OAUTH_CODE = oauth_result.get("code")
-            _OAUTH_ERROR = oauth_result.get("error")
-            _OAUTH_EVENT.set()
-        if _OAUTH_EVENT.is_set():
-            if _OAUTH_ERROR:
-                st.error(f"OAuth error: {_OAUTH_ERROR}")
-                _clear_oauth_result()
-            else:
-                state = None
-                if oauth_result:
-                    state = oauth_result.get("state")
-                if state and state != st.session_state.get("oauth_state"):
-                    st.error("OAuth error: State mismatch.")
-                    _clear_oauth_result()
-                    return
-                try:
-                    token_data = _exchange_code_for_token(_OAUTH_CODE, client_id, client_secret)
-                    access_token = token_data.get("access_token", "")
-                    refresh_token = token_data.get("refresh_token")
-                    if not access_token:
-                        raise RuntimeError("OAuth did not return an access token.")
-                    keyring_failed = False
-                    if refresh_token:
-                        keyring_failed = not _set_keyring_value(_KEYRING_REFRESH_TOKEN, refresh_token)
-                    if not _set_keyring_value(_KEYRING_CLIENT_ID, client_id):
-                        keyring_failed = True
-                    if not _set_keyring_value(_KEYRING_CLIENT_SECRET, client_secret):
-                        keyring_failed = True
-                    expires_in = int(token_data.get("expires_in", 3600))
-                    st.session_state["access_token"] = access_token
-                    st.session_state["access_expires_at"] = time.time() + expires_in - 60
-                    st.session_state["manual_access_token"] = access_token
-                    st.session_state["oauth_in_progress"] = False
-                    st.success("Google Drive authorization successful.")
-                    if keyring_failed:
-                        st.warning(
-                            "Saved access token for this session, but the OS keychain is unavailable. "
-                            "You'll need to sign in again next time."
-                        )
-                    _clear_oauth_result()
-                except Exception as exc:
-                    st.session_state["oauth_in_progress"] = False
-                    st.error(f"OAuth token exchange failed: {exc}")
-                    _clear_oauth_result()
-
-    with st.expander("Troubleshooting (manual redirect)", expanded=False):
-        st.caption("Use this only if the local callback flow does not work.")
-        redirect_url = st.text_input(
-            "Redirect URL",
-            help="Paste the full redirect URL after consent to extract the authorization code.",
-        )
-        if st.button("Extract token"):
-            if not redirect_url.strip():
-                st.error("Paste the redirect URL first.")
-            elif not client_id or not client_secret:
-                st.error("Client ID and Client Secret are required for OAuth.")
-            else:
-                manual_code = _extract_code_from_redirect(redirect_url)
-                if not manual_code:
-                    st.error("No authorization code found in the redirect URL.")
-                else:
-                    try:
-                        token_data = _exchange_code_for_token(manual_code, client_id, client_secret)
-                        access_token = token_data.get("access_token", "")
-                        refresh_token = token_data.get("refresh_token")
-                        if not access_token:
-                            raise RuntimeError("OAuth did not return an access token.")
-                        keyring_failed = False
-                        if refresh_token:
-                            keyring_failed = not _set_keyring_value(_KEYRING_REFRESH_TOKEN, refresh_token)
-                        if not _set_keyring_value(_KEYRING_CLIENT_ID, client_id):
-                            keyring_failed = True
-                        if not _set_keyring_value(_KEYRING_CLIENT_SECRET, client_secret):
-                            keyring_failed = True
-                        expires_in = int(token_data.get("expires_in", 3600))
-                        st.session_state["access_token"] = access_token
-                        st.session_state["access_expires_at"] = time.time() + expires_in - 60
-                        st.session_state["manual_access_token"] = access_token
-                        st.session_state["oauth_in_progress"] = False
-                        st.success("Google Drive authorization successful.")
-                        if keyring_failed:
-                            st.warning(
-                                "Saved access token for this session, but the OS keychain is unavailable. "
-                                "You'll need to sign in again next time."
-                            )
-                    except Exception as exc:
-                        st.error(f"OAuth token exchange failed: {exc}")
-
-    st.subheader("Manual Access Token (Fallback)")
-    access_token = st.text_input(
-        "Access Token",
-        value=st.session_state.get("manual_access_token", ""),
-        type="password",
-    )
-    if st.button("Validate token"):
-        if not access_token:
-            st.error("Access token is required to validate.")
-        else:
-            try:
-                info = _validate_access_token(access_token)
-                st.success("Token is valid.")
-                st.json(info)
-            except Exception as exc:
-                st.error(str(exc))
     folder_id = st.text_input(
         "Folder ID or URL",
         value=env_folder_id,
@@ -898,7 +104,7 @@ def main() -> None:
 
     if list_clicked:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             extracted_folder_id = _extract_folder_id(folder_id)
             if not extracted_folder_id:
@@ -920,7 +126,7 @@ def main() -> None:
         st.subheader("Job")
         st.write(f"Job ID: {job_id}")
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             summary = services["report_service"].get_final_report_summary(job_id)
             st.caption(
@@ -949,7 +155,7 @@ def main() -> None:
         )
         if run_ocr_clicked:
             try:
-                token = _ensure_access_token(access_token, client_id, client_secret)
+                token = ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 with st.spinner("Running OCR..."):
                     services["ocr_service"].run_ocr(job_id)
@@ -961,7 +167,7 @@ def main() -> None:
                 st.error(f"OCR failed: {exc}")
         if preview_report_clicked:
             try:
-                token = _ensure_access_token(access_token, client_id, client_secret)
+                token = ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 report_text = services["report_service"].preview_report(job_id)
                 st.session_state["report_preview"] = report_text
@@ -971,7 +177,7 @@ def main() -> None:
 
         if extract_clicked:
             try:
-                token = _ensure_access_token(access_token, client_id, client_secret)
+                token = ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 with st.spinner("Extracting fields..."):
                     services["extraction_service"].extract_fields_for_job(job_id)
@@ -988,7 +194,7 @@ def main() -> None:
 
         if write_report_clicked:
             try:
-                token = _ensure_access_token(access_token, client_id, client_secret)
+                token = ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 report_file_id = services["report_service"].write_report(job_id)
                 st.success(f"Final report uploaded. File ID: {report_file_id}")
@@ -999,7 +205,7 @@ def main() -> None:
                 st.error("Run OCR first.")
             else:
                 try:
-                    token = _ensure_access_token(access_token, client_id, client_secret)
+                    token = ensure_access_token(access_token, client_id, client_secret)
                     services = _get_services(token, sqlite_path)
                     results: dict[str, dict] = {}
                     try:
@@ -1093,7 +299,7 @@ def main() -> None:
     using_json_fallback = False
     if job_id:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             labels_data, label_id_map, using_json_fallback = _load_labels_from_storage(
                 services["storage"]
@@ -1108,12 +314,12 @@ def main() -> None:
     fallback_candidates = list_fallback_candidates(labels_data)
     fallback_candidate_names = [candidate.name for candidate in fallback_candidates]
     classification_results = st.session_state.get("classification_results", {})
-    llm_classifications: dict[str, tuple[str | None, float, list[str]]] = {}
+    llm_classifications: dict[str, LLMLabelClassification] = {}
     llm_overrides: dict[str, str] = {}
     storage = None
     if job_id:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             storage = services["storage"]
             llm_classifications = services["storage"].list_llm_label_classifications(job_id)
@@ -1189,7 +395,7 @@ def main() -> None:
                 current_selections[file_ref.file_id] = selected_label
                 if job_id and selected_label != previous_label:
                     try:
-                        token = _ensure_access_token(access_token, client_id, client_secret)
+                        token = ensure_access_token(access_token, client_id, client_secret)
                         services = _get_services(token, sqlite_path)
                         label_id = label_id_map.get(selected_label) if selected_label else None
                         services["label_classification_service"].override_file_label(
@@ -1203,7 +409,7 @@ def main() -> None:
                         key=f"add_example_{file_ref.file_id}",
                     ):
                         try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            token = ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
                             ocr_result = services["storage"].get_ocr_result(
                                 job_id, file_ref.file_id
@@ -1251,7 +457,7 @@ def main() -> None:
                             st.error("List files and run OCR before creating labels.")
                         else:
                             try:
-                                token = _ensure_access_token(
+                                token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
@@ -1335,7 +541,9 @@ def main() -> None:
                 if llm_override:
                     st.write(f"LLM suggestion: {llm_override} (OVERRIDDEN)")
                 else:
-                    llm_result = llm_classifications.get(file_ref.file_id)
+                    llm_result: LLMLabelClassification | None = llm_classifications.get(
+                        file_ref.file_id
+                    )
                     llm_called = result.get("llm_called") if result else False
                     if llm_result is None:
                         if llm_called:
@@ -1343,7 +551,9 @@ def main() -> None:
                         else:
                             st.write("LLM suggestion: — (not invoked)")
                     else:
-                        llm_label, llm_confidence, llm_signals = llm_result
+                        llm_label = llm_result.label_name
+                        llm_confidence = llm_result.confidence
+                        llm_signals = [str(signal) for signal in llm_result.signals]
                         if llm_label:
                             llm_score_pct = f"{llm_confidence * 100:.1f}%"
                             st.write(f"LLM suggestion: {llm_label} ({llm_score_pct})")
@@ -1373,7 +583,7 @@ def main() -> None:
                     )
                     if new_override != current_override:
                         try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            token = ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
                             if new_override:
                                 updated_at = datetime.now(timezone.utc).isoformat()
@@ -1396,7 +606,7 @@ def main() -> None:
                 if job_id:
                     with st.expander("Extracted fields", expanded=False):
                         try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            token = ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
                             extraction = services["storage"].get_extraction(
                                 job_id, file_ref.file_id
@@ -1440,7 +650,7 @@ def main() -> None:
                             key=f"run_ocr_{file_ref.file_id}",
                         ):
                             try:
-                                token = _ensure_access_token(
+                                token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
@@ -1458,7 +668,7 @@ def main() -> None:
                             key=f"classify_file_{file_ref.file_id}",
                         ):
                             try:
-                                token = _ensure_access_token(
+                                token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
@@ -1502,7 +712,7 @@ def main() -> None:
                             key=f"extract_file_{file_ref.file_id}",
                         ):
                             try:
-                                token = _ensure_access_token(
+                                token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
@@ -1540,7 +750,7 @@ def main() -> None:
                         st.error("Enter a new filename first.")
                     else:
                         try:
-                            token = _ensure_access_token(
+                            token = ensure_access_token(
                                 access_token, client_id, client_secret
                             )
                             services = _get_services(token, sqlite_path)
@@ -1562,7 +772,7 @@ def main() -> None:
                 if job_id:
                     with st.expander("View OCR", expanded=False):
                         try:
-                            token = _ensure_access_token(access_token, client_id, client_secret)
+                            token = ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
                             ocr_result = services["storage"].get_ocr_result(
                                 job_id, file_ref.file_id
@@ -1593,7 +803,7 @@ def main() -> None:
                         )
                         if load_preview:
                             try:
-                                token = _ensure_access_token(
+                                token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
@@ -1641,7 +851,7 @@ def main() -> None:
 
     if preview_clicked:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             if job_id is None:
                 raise RuntimeError("No job has been created yet.")
@@ -1660,7 +870,7 @@ def main() -> None:
 
     if apply_clicked:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             if job_id is None:
                 raise RuntimeError("No job has been created yet.")
@@ -1674,7 +884,7 @@ def main() -> None:
 
     if undo_clicked:
         try:
-            token = _ensure_access_token(access_token, client_id, client_secret)
+            token = ensure_access_token(access_token, client_id, client_secret)
             services = _get_services(token, sqlite_path)
             if job_id is None:
                 raise RuntimeError("No job has been created yet.")

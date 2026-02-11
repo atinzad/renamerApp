@@ -10,6 +10,7 @@ from app.domain.label_fallback import (
     normalize_labels_llm,
 )
 from app.domain.labels import NO_MATCH
+from app.domain.models import FileLabelOverride, LabelAssignment
 from app.ports.llm_port import LLMPort
 from app.ports.storage_port import StoragePort
 from app.settings import LLM_LABEL_MIN_CONFIDENCE, LLM_PROVIDER, OPENAI_API_KEY
@@ -37,14 +38,8 @@ class LLMFallbackLabelService:
             raise RuntimeError("No fallback labels configured (labels with non-empty llm).")
         self._ensure_llm_configured()
 
-        assignments = {
-            item.get("file_id"): item
-            for item in self._storage.list_file_label_assignments(job_id)
-        }
-        overrides = {
-            item.get("file_id"): item
-            for item in self._storage.list_file_label_overrides(job_id)
-        }
+        assignments = {item.file_id: item for item in self._storage.list_file_label_assignments(job_id)}
+        overrides = {item.file_id: item for item in self._storage.list_file_label_overrides(job_id)}
         llm_overrides = self._storage.list_llm_label_overrides(job_id)
 
         for file_ref in self._storage.get_job_files(job_id):
@@ -63,14 +58,8 @@ class LLMFallbackLabelService:
         if not candidates:
             raise RuntimeError("No fallback labels configured (labels with non-empty llm).")
         self._ensure_llm_configured()
-        assignments = {
-            item.get("file_id"): item
-            for item in self._storage.list_file_label_assignments(job_id)
-        }
-        overrides = {
-            item.get("file_id"): item
-            for item in self._storage.list_file_label_overrides(job_id)
-        }
+        assignments = {item.file_id: item for item in self._storage.list_file_label_assignments(job_id)}
+        overrides = {item.file_id: item for item in self._storage.list_file_label_overrides(job_id)}
         llm_overrides = self._storage.list_llm_label_overrides(job_id)
         self._classify_file_for_job(
             job_id,
@@ -91,8 +80,8 @@ class LLMFallbackLabelService:
         job_id: str,
         file_id: str,
         candidates: list[LabelFallbackCandidate],
-        assignments: dict[str, dict],
-        overrides: dict[str, dict],
+        assignments: dict[str, LabelAssignment],
+        overrides: dict[str, FileLabelOverride],
         llm_overrides: dict[str, str],
     ) -> None:
         if file_id in overrides:
@@ -100,7 +89,7 @@ class LLMFallbackLabelService:
         if file_id in llm_overrides:
             return
         assignment = assignments.get(file_id)
-        if assignment is not None and assignment.get("status") != NO_MATCH:
+        if assignment is not None and assignment.status != NO_MATCH:
             return
         ocr = self._storage.get_ocr_result(job_id, file_id)
         if ocr is None or not ocr.text:

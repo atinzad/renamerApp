@@ -15,7 +15,7 @@ class ReportService:
 
     def preview_report(self, job_id: str | None = None) -> str:
         job = self._get_job_or_raise(job_id)
-        job_files = self._get_job_files_full(job.job_id)
+        job_files = self._storage.get_job_files_full(job.job_id)
         applied_renames = self._applied_renames_map(job.job_id)
         file_rows: list[dict] = []
         for index, file_ref in enumerate(job_files):
@@ -72,7 +72,7 @@ class ReportService:
 
     def get_final_report_summary(self, job_id: str | None = None) -> dict[str, int]:
         job = self._get_job_or_raise(job_id)
-        job_files = self._get_job_files_full(job.job_id)
+        job_files = self._storage.get_job_files_full(job.job_id)
         applied_renames = self._applied_renames_map(job.job_id)
         renamed_count = sum(
             1 for file_ref in job_files if file_ref.file_id in applied_renames
@@ -82,7 +82,7 @@ class ReportService:
         needs_review_count = 0
         for file_ref in job_files:
             final_label = self._get_final_label(job.job_id, file_ref.file_id)
-            assignment = self._get_label_assignment(job.job_id, file_ref.file_id)
+            assignment = self._storage.get_file_label_assignment(job.job_id, file_ref.file_id)
             status = assignment.status if assignment else None
             fields, schema = self._get_extraction_payload(job.job_id, file_ref.file_id)
             if final_label == "UNLABELED" or status == "AMBIGUOUS":
@@ -119,19 +119,20 @@ class ReportService:
         extraction = self._storage.get_extraction(job_id, file_id)
         if extraction is None:
             return self._fallback_fields_schema(None, None)
-        fields_json = self._extract_value(extraction, "fields_json")
-        schema_json = self._extract_value(extraction, "schema_json")
-        fields = self._load_json_dict(fields_json)
+        fields_json = extraction.fields_json
+        schema_json = extraction.schema_json
+        fields_payload = self._load_json_dict(fields_json)
+        fields = self._extract_fields(fields_payload)
         schema = self._load_json_dict(schema_json)
         return self._fallback_fields_schema(fields, schema)
 
     def _get_final_label(self, job_id: str, file_id: str) -> str:
-        override_id = self._get_override_label_id(job_id, file_id)
+        override_id = self._storage.get_file_label_override(job_id, file_id)
         if override_id:
             label = self._storage.get_label(override_id)
             if label is not None:
                 return label.name
-        assignment = self._get_label_assignment(job_id, file_id)
+        assignment = self._storage.get_file_label_assignment(job_id, file_id)
         if assignment and assignment.label_id:
             label = self._storage.get_label(assignment.label_id)
             if label is not None:
@@ -140,82 +141,23 @@ class ReportService:
         if llm_override:
             return llm_override
         llm_classification = self._storage.get_llm_label_classification(job_id, file_id)
-        label_name = self._extract_llm_label_name(llm_classification)
+        label_name = llm_classification.label_name if llm_classification else None
         if label_name:
             return label_name
         return "UNLABELED"
 
     def _applied_renames_map(self, job_id: str) -> dict[str, str]:
-        return {
-            self._extract_value(item, "file_id"): self._extract_value(item, "new_name")
-            for item in self._storage.list_applied_renames(job_id)
-        }
+        return {item.file_id: item.new_name for item in self._storage.list_applied_renames(job_id)}
 
     def _get_file_timings(self, job_id: str, file_id: str) -> dict[str, int | None]:
-        getter = getattr(self._storage, "get_file_timings", None)
-        record = getter(job_id, file_id) if callable(getter) else None
+        record = self._storage.get_file_timings(job_id, file_id)
         if record is None:
             return {"ocr_ms": None, "classify_ms": None, "extract_ms": None}
         return {
-            "ocr_ms": self._extract_value(record, "ocr_ms"),
-            "classify_ms": self._extract_value(record, "classify_ms"),
-            "extract_ms": self._extract_value(record, "extract_ms"),
+            "ocr_ms": record.ocr_ms,
+            "classify_ms": record.classify_ms,
+            "extract_ms": record.extract_ms,
         }
-
-    def _get_override_label_id(self, job_id: str, file_id: str) -> str | None:
-        getter = getattr(self._storage, "get_file_label_override", None)
-        if callable(getter):
-            override = getter(job_id, file_id)
-            if isinstance(override, str):
-                return override
-            return self._extract_value(override, "label_id") if override else None
-        legacy_getter = getattr(self._storage, "get_file_label_override_id", None)
-        if callable(legacy_getter):
-            return legacy_getter(job_id, file_id)
-        return None
-
-    def _get_label_assignment(self, job_id: str, file_id: str):
-        getter = getattr(self._storage, "get_file_label_assignment", None)
-        assignment = getter(job_id, file_id) if callable(getter) else None
-        if assignment is None:
-            legacy_getter = getattr(self._storage, "get_file_label_assignment_summary", None)
-            if callable(legacy_getter):
-                assignment = legacy_getter(job_id, file_id)
-        if assignment is None:
-            return None
-        if isinstance(assignment, tuple) and len(assignment) >= 3:
-            return _LabelAssignmentShim(
-                label_id=assignment[0],
-                status=str(assignment[2]),
-                score=float(assignment[1]) if assignment[1] is not None else 0.0,
-            )
-        label_id = self._extract_value(assignment, "label_id")
-        status = self._extract_value(assignment, "status")
-        score = self._extract_value(assignment, "score")
-        return _LabelAssignmentShim(
-            label_id=label_id,
-            status=status or "",
-            score=float(score) if score is not None else 0.0,
-        )
-
-    def _extract_llm_label_name(self, classification) -> str | None:
-        if classification is None:
-            return None
-        if isinstance(classification, tuple) and classification:
-            return classification[0]
-        return self._extract_value(classification, "label_name")
-
-    def _get_job_files_full(self, job_id: str):
-        getter = getattr(self._storage, "get_job_files_full", None)
-        if callable(getter):
-            return getter(job_id)
-        return self._storage.get_job_files(job_id)
-
-    @staticmethod
-    def _extract_value(item, key: str):
-        if isinstance(item, dict):
-            return item.get(key)
-        return getattr(item, key, None)
 
     @staticmethod
     def _load_json_dict(value: str | None) -> dict | None:
@@ -232,8 +174,13 @@ class ReportService:
         fields: dict | None, schema: dict | None
     ) -> tuple[dict | None, dict | None]:
         if isinstance(schema, dict) and schema:
+            keys = ReportService._schema_field_keys(schema)
+            if not keys:
+                keys = list(schema.keys())
             if not isinstance(fields, dict) or not fields:
-                fields = {key: None for key in schema.keys()}
+                fields = {key: None for key in keys}
+            else:
+                fields = {key: fields.get(key) for key in keys}
             return fields, schema
         if not isinstance(fields, dict) or not fields:
             return {"unknown": None}, {"unknown": "string"}
@@ -243,7 +190,12 @@ class ReportService:
     def _fields_have_unknown(fields: dict | None, schema: dict | None) -> bool:
         if not isinstance(fields, dict) or not fields:
             return True
-        keys = list(schema.keys()) if isinstance(schema, dict) and schema else list(fields.keys())
+        if isinstance(schema, dict) and schema:
+            keys = ReportService._schema_field_keys(schema)
+            if not keys:
+                keys = list(schema.keys())
+        else:
+            keys = list(fields.keys())
         for key in keys:
             value = fields.get(key)
             if value is None:
@@ -256,13 +208,17 @@ class ReportService:
                 return True
         return False
 
-
-class _LabelAssignmentShim:
-    def __init__(self, label_id: str | None, status: str, score: float) -> None:
-        self.label_id = label_id
-        self.status = status
-        self.score = score
+    @staticmethod
+    def _extract_fields(value: dict | None) -> dict | None:
+        if not isinstance(value, dict):
+            return None
+        if isinstance(value.get("fields"), dict):
+            return value["fields"]
+        return value
 
     @staticmethod
-    def _report_filename(created_at) -> str:
-        return f"REPORT_{local_date_yyyy_mm_dd(created_at)}.txt"
+    def _schema_field_keys(schema: dict) -> list[str]:
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            return list(properties.keys())
+        return list(schema.keys())

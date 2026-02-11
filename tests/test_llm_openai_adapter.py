@@ -37,3 +37,10 @@ def test_openai_adapter_abstains_below_min_confidence() -> None:
     result = adapter._parse_response(json.dumps(payload), candidates)
     assert result.label_name is None
     assert "BELOW_MIN_CONFIDENCE" in result.signals
+
+
+def test_openai_adapter_parse_fields_response_reads_fields_object() -> None:
+    adapter = _adapter()
+    payload = {"output_text": json.dumps({"fields": {"civil_id": "123456789012"}})}
+    parsed = adapter._parse_fields_response(payload)
+    assert parsed == {"civil_id": "123456789012"}

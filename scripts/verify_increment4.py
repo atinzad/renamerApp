@@ -1,53 +1,26 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_REPO_ROOT / ".env", override=False)
 
-from app.adapters.sqlite_storage import SQLiteStorage
 from app.container import build_services
-from app.domain.labels import MATCHED, NO_MATCH, decide_match
-from app.domain.similarity import jaccard_similarity, normalize_text_to_tokens
+from app.domain.labels import MATCHED
 
 
-def _labels_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "labels.json"
-
-
-def _save_labels(data: list[dict]) -> None:
-    _labels_path().write_text(json.dumps(data, indent=2, sort_keys=True))
-
-
-def _classify(labels: list[dict], ocr_text: str) -> tuple[str | None, float, str]:
-    tokens = normalize_text_to_tokens(ocr_text)
-    if not tokens or not labels:
-        return None, 0.0, NO_MATCH
-    scores: list[tuple[str, float]] = []
+def _example_label_map(storage, include_inactive: bool) -> dict[str, str]:
+    file_to_label: dict[str, str] = {}
+    labels = storage.list_labels(include_inactive=include_inactive)
     for label in labels:
-        name = label.get("name")
-        examples = label.get("examples", [])
-        if not name or not examples:
-            continue
-        best = None
-        for example_text in examples:
-            example_tokens = normalize_text_to_tokens(example_text)
-            score = jaccard_similarity(tokens, example_tokens)
-            if best is None or score > best:
-                best = score
-        if best is not None:
-            scores.append((name, best))
-    if not scores:
-        return None, 0.0, NO_MATCH
-    scores.sort(key=lambda item: item[1], reverse=True)
-    best_label, best_score = scores[0]
-    second_score = scores[1][1] if len(scores) > 1 else None
-    status, _ = decide_match(best_label, best_score, second_score, 0.35, 0.02)
-    return best_label, best_score, status
+        examples = storage.list_label_examples(label.label_id)
+        for example in examples:
+            file_to_label[example.file_id] = label.label_id
+    return file_to_label
 
 
 def main() -> None:
@@ -61,6 +34,8 @@ def main() -> None:
     jobs_service = services["jobs_service"]
     ocr_service = services["ocr_service"]
     storage = services["storage"]
+    label_service = services["label_service"]
+    classifier = services["label_classification_service"]
 
     job = jobs_service.create_job(folder_id)
     files = jobs_service.list_files(job.job_id)
@@ -68,24 +43,67 @@ def main() -> None:
         raise SystemExit("No files returned from Drive for this folder.")
 
     ocr_service.run_ocr(job.job_id)
-    first = next((file_ref for file_ref in files), None)
-    if first is None:
-        raise SystemExit("No files to classify.")
-    ocr_result = storage.get_ocr_result(job.job_id, first.file_id)
-    if ocr_result is None or not ocr_result.text.strip():
-        raise SystemExit("Missing OCR text for the first file.")
+    files_with_ocr = [
+        file_ref
+        for file_ref in files
+        if (
+            (result := storage.get_ocr_result(job.job_id, file_ref.file_id))
+            and result.text.strip()
+        )
+    ]
+    if not files_with_ocr:
+        raise SystemExit("No files with OCR text available for classification.")
 
-    labels = [{"name": "TEST_LABEL", "examples": [ocr_result.text]}]
-    _save_labels(labels)
+    all_examples = _example_label_map(storage, include_inactive=True)
+    active_examples = _example_label_map(storage, include_inactive=False)
 
-    label, score, status = _classify(labels, ocr_result.text)
-    if status != MATCHED or label != "TEST_LABEL":
-        raise SystemExit("Classification did not match the expected label.")
+    target_file = next(
+        (file_ref for file_ref in files_with_ocr if file_ref.file_id not in all_examples),
+        None,
+    )
+    expected_label_id = None
+    label_origin = ""
+    if target_file is not None:
+        label_name = f"VERIFY_INCREMENT4_{uuid4().hex[:8]}"
+        label = label_service.create_label(label_name, "{}", "")
+        label_service.attach_example(label.label_id, target_file.file_id)
+        label_service.process_examples(label.label_id, job_id=job.job_id)
+        expected_label_id = label.label_id
+        label_origin = "created"
+    else:
+        target_file = next(
+            (file_ref for file_ref in files_with_ocr if file_ref.file_id in active_examples),
+            None,
+        )
+        if target_file is None:
+            raise SystemExit(
+                "All OCR files are already attached to inactive labels. "
+                "Use a fresh SQLite DB or add files not used as prior examples."
+            )
+        expected_label_id = active_examples[target_file.file_id]
+        label_origin = "existing"
+
+    details = classifier.classify_file(job.job_id, target_file.file_id)
+    assignment = storage.get_file_label_assignment(job.job_id, target_file.file_id)
+    if assignment is None:
+        raise SystemExit("Classification did not persist an assignment.")
+    status = assignment.status
+    label_id = assignment.label_id
+    score = float(assignment.score)
+    if status != MATCHED:
+        raise SystemExit(
+            f"Classification status is {status}; expected {MATCHED}. details={details}"
+        )
+    if label_id != expected_label_id:
+        raise SystemExit(
+            f"Classification label mismatch. expected={expected_label_id} got={label_id}"
+        )
 
     print("Increment 4 integration check passed.")
     print(f"job_id={job.job_id}")
-    print(f"file_id={first.file_id}")
-    print(f"label={label}")
+    print(f"file_id={target_file.file_id}")
+    print(f"label_id={label_id}")
+    print(f"label_origin={label_origin}")
     print(f"score={score:.3f}")
     print(f"status={status}")
 

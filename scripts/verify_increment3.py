@@ -13,16 +13,16 @@ load_dotenv(_REPO_ROOT / ".env", override=False)
 from app.container import build_services
 
 
-def _get_updated_at(sqlite_path: str, job_id: str, file_id: str) -> str | None:
+def _get_updated_at(sqlite_path: str, file_id: str) -> str | None:
     try:
         with sqlite3.connect(sqlite_path) as conn:
             row = conn.execute(
                 """
                 SELECT updated_at
                 FROM ocr_results
-                WHERE job_id = ? AND file_id = ?
+                WHERE file_id = ?
                 """,
-                (job_id, file_id),
+                (file_id,),
             ).fetchone()
         if row is None:
             return None
@@ -73,22 +73,22 @@ def main() -> None:
         raise SystemExit(f"OCR results missing for: {missing}")
 
     first_file = target_files[0]
-    before = _get_updated_at(sqlite_path, job.job_id, first_file.file_id)
+    before = _get_updated_at(sqlite_path, first_file.file_id)
     time.sleep(1)
     ocr_service.run_ocr(job.job_id, [first_file.file_id])
-    after = _get_updated_at(sqlite_path, job.job_id, first_file.file_id)
+    after = _get_updated_at(sqlite_path, first_file.file_id)
     if before and after and before == after:
         raise SystemExit("OCR overwrite check failed: updated_at did not change.")
 
     report_text = report_service.preview_report(job.job_id)
-    ocr_result = storage.get_ocr_result(job.job_id, first_file.file_id)
-    if ocr_result and ocr_result.text.strip():
-        snippet = ocr_result.text.strip()[:80]
-        if snippet not in report_text:
-            raise SystemExit("Report preview did not include OCR text snippet.")
+    if "REPORT_VERSION: 2" not in report_text:
+        raise SystemExit("Report preview did not produce REPORT_VERSION: 2.")
+    if f"FILE_ID: {first_file.file_id}" not in report_text:
+        raise SystemExit("Report preview is missing the sample file id block.")
 
     print("Integration checks passed.")
     print(f"Sample file: {first_file.name} ({first_file.file_id})")
+    ocr_result = storage.get_ocr_result(job.job_id, first_file.file_id)
     print(f"Sample OCR text length: {len(ocr_result.text) if ocr_result else 0}")
 
 

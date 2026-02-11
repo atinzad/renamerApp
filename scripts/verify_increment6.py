@@ -58,7 +58,7 @@ def main() -> None:
     extraction = storage.get_extraction(job.job_id, first.file_id)
     if extraction is None:
         raise SystemExit("No extraction stored for the first file.")
-    payload = json.loads(extraction["fields_json"])
+    payload = json.loads(extraction.fields_json or "{}")
     fields = payload.get("fields", {})
     if not isinstance(fields, dict):
         raise SystemExit("Extraction fields are not a JSON object.")

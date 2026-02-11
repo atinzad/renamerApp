@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -63,8 +64,8 @@ def main() -> None:
     classifier.classify_file(job.job_id, file_id)
     assignment = storage.get_file_label_assignment(job.job_id, file_id)
     label_name = None
-    if assignment and assignment.get("label_id"):
-        label = storage.get_label(assignment["label_id"])
+    if assignment and assignment.label_id:
+        label = storage.get_label(assignment.label_id)
         label_name = label.name if label else None
 
     print("Rule-based classification:")
@@ -73,8 +74,8 @@ def main() -> None:
             json.dumps(
                 {
                     "label_name": label_name,
-                    "score": assignment.get("score", 0.0),
-                    "status": assignment.get("status"),
+                    "score": assignment.score,
+                    "status": assignment.status,
                 },
                 indent=2,
             )
@@ -87,13 +88,12 @@ def main() -> None:
     if llm_result is None:
         print(json.dumps({"label_name": None, "confidence": 0.0, "signals": []}, indent=2))
     else:
-        label_name, confidence, signals = llm_result
         print(
             json.dumps(
                 {
-                    "label_name": label_name,
-                    "confidence": confidence,
-                    "signals": signals,
+                    "label_name": llm_result.label_name,
+                    "confidence": llm_result.confidence,
+                    "signals": llm_result.signals,
                 },
                 indent=2,
             )
