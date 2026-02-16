@@ -36,28 +36,54 @@ class _RecordingLLM:
         }
 
 
-def test_build_from_ocr_guidance_override_is_prompt_not_ocr_text() -> None:
+class _NoisyLLM:
+    def __init__(self) -> None:
+        self.calls: list[tuple[dict, str, str | None]] = []
+
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
+        self.calls.append((schema, ocr_text, instructions))
+        return {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "j_vey": {"type": "string"},
+                    "i": {"type": "string"},
+                    "subnet_fol_ee_braer_32": {"type": "string"},
+                    "name": {"type": "string"},
+                    "address": {"type": "string"},
+                },
+                "required": [
+                    "j_vey",
+                    "i",
+                    "subnet_fol_ee_braer_32",
+                    "name",
+                    "address",
+                ],
+                "additionalProperties": False,
+            },
+            "instructions": "ignored",
+        }
+
+
+def test_build_from_ocr_guidance_override_ignores_ocr_text() -> None:
     storage = _RecordingStorage()
     llm = _RecordingLLM()
     service = SchemaBuilderService(storage=storage, llm=llm)
 
     guidance = "Only include issuer_name, document_number, and issue_date."
-    ocr_text = "Document Number: 12345\nIssuer: Ministry of Interior"
-
-    schema, _ = service.build_from_ocr(
-        "label-1", ocr_text, guidance_override=guidance
-    )
-
-    assert llm.calls
-    first_call = llm.calls[0]
-    assert first_call[1] == ocr_text
-    assert first_call[2] is not None
-    assert guidance in first_call[2]
+    schema, _ = service.build_from_ocr("label-1", "", guidance_override=guidance)
+    assert llm.calls == []
 
     assert storage.schema_updates
     stored_schema = json.loads(storage.schema_updates[-1][1])
     assert stored_schema == schema
-    assert "document_number" in stored_schema.get("properties", {})
+    assert set(stored_schema.get("properties", {}).keys()) == {
+        "issuer_name",
+        "document_number",
+        "issue_date",
+    }
     assert storage.instructions_updates
 
 
@@ -115,3 +141,50 @@ def test_build_from_ocr_extract_nothing_else_and_patterns_guidance() -> None:
     properties = stored_schema.get("properties", {})
     assert set(properties.keys()) == {"civil_number", "name", "expiry_date"}
     assert "text patterns" in instructions.lower()
+
+
+def test_build_from_ocr_do_not_extract_anything_else_guidance_is_enforced() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = "Extract The name and the address. Do not extract anything else."
+    schema, _ = service.build_from_ocr("label-1", "noisy text", guidance_override=guidance)
+
+    properties = schema.get("properties", {})
+    assert set(properties.keys()) == {"name", "address"}
+
+
+def test_build_from_ocr_guidance_boolean_flag_uses_boolean_type() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = (
+        "Extract the name and whether signature is filled. "
+        "Use a true or false flag for signature. Nothing else."
+    )
+    schema, _ = service.build_from_ocr("label-1", "", guidance_override=guidance)
+
+    properties = schema.get("properties", {})
+    assert properties["name"] == {"type": "string"}
+    assert properties["signature_present"] == {"type": "boolean"}
+
+
+def test_build_from_ocr_filters_noisy_keys_and_keeps_relevant_fields() -> None:
+    storage = _RecordingStorage()
+    llm = _NoisyLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    schema, _ = service.build_from_ocr(
+        "label-1",
+        "PREPROCESSED_OCR\nName: Jane Doe\nAddress: Kuwait City\nj_vey: noisy",
+        guidance_override="",
+    )
+
+    properties = schema.get("properties", {})
+    assert "name" in properties
+    assert "address" in properties
+    assert "j_vey" not in properties
+    assert "i" not in properties
+    assert "subnet_fol_ee_braer_32" not in properties
