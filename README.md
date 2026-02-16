@@ -14,15 +14,38 @@ per-label extraction schema + instructions and LLM-backed field extraction (Incr
 - `src/app/ui_streamlit/` — Streamlit UI entrypoint
 
 ## Run Locally (uv)
-1) Create the environment and install dependencies:
+First-time setup (recommended):
+```bash
+make setup
+```
+This runs Python dependency installation (`uv sync`) and attempts to install OCR system
+dependencies automatically:
+- Ubuntu/Debian: `apt-get`
+- Windows: `winget` (fallback: `choco`)
+
+Manual setup:
+
+1) Create the environment and install Python dependencies:
 ```bash
 uv sync
 ```
 
-2) Install system OCR dependencies (Ubuntu):
+2) Install system OCR dependencies.
+
+Ubuntu/Debian:
 ```bash
 sudo apt-get update
 sudo apt-get install -y tesseract-ocr tesseract-ocr-ara poppler-utils
+```
+
+Windows (PowerShell, with winget):
+```powershell
+winget install -e --id UB-Mannheim.TesseractOCR --accept-package-agreements --accept-source-agreements
+winget install -e --id oschwartz10612.Poppler --accept-package-agreements --accept-source-agreements
+```
+If `winget` is unavailable, use Chocolatey:
+```powershell
+choco install -y tesseract poppler
 ```
 
 3) Activate the virtual environment:
@@ -38,6 +61,13 @@ Or use the project shortcut:
 ```bash
 make ui
 ```
+
+Useful Make shortcuts:
+- `make setup` — first-time bootstrap (Python deps + system OCR deps when supported)
+- `make setup-python` — Python deps only (`uv sync`)
+- `make setup-system` — system OCR deps only
+- `make pull` — pull latest changes
+- `make ui` — start the Streamlit UI
 
 Optional (LLM fallback):
 - Set `LLM_PROVIDER=openai`
