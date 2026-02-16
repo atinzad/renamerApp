@@ -7,6 +7,7 @@ app.db
 app_new.db
 app_import.db
 app_old.db
+backups/
 ocr_text.txt
 scripts/label_create.csv
 
