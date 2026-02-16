@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 
 import requests
@@ -14,12 +16,18 @@ from app.ports.llm_port import LLMPort
 
 class OpenAILLMAdapter(LLMPort):
     def __init__(
-        self, api_key: str, model: str, base_url: str, min_confidence: float
+        self,
+        api_key: str,
+        model: str,
+        base_url: str,
+        min_confidence: float,
+        max_image_pages: int = 3,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._min_confidence = min_confidence
+        self._max_image_pages = max(1, int(max_image_pages))
 
     def classify_label(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
@@ -53,17 +61,11 @@ class OpenAILLMAdapter(LLMPort):
         if not self._api_key:
             return {}
         json_schema = self._coerce_json_schema(schema)
-        instructions = instructions.strip() if instructions else ""
-        instruction_line = f"{instructions}\n\n" if instructions else ""
+        system_prompt = self._build_extraction_system_prompt(instructions)
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are a structured extraction assistant. "
-                    f"{instruction_line}"
-                    "Return JSON that matches the provided schema. "
-                    "If a value is missing, return \"UNKNOWN\" for that field."
-                ),
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -75,6 +77,45 @@ class OpenAILLMAdapter(LLMPort):
                 ),
             },
         ]
+        return self._run_extraction(messages, json_schema)
+
+    def extract_fields_from_image(
+        self,
+        schema: dict,
+        file_bytes: bytes,
+        mime_type: str,
+        instructions: str | None = None,
+    ) -> dict:
+        if not self._api_key:
+            return {}
+        if not file_bytes:
+            return {}
+        json_schema = self._coerce_json_schema(schema)
+        system_prompt = self._build_extraction_system_prompt(instructions)
+        image_blobs = self._images_from_file_bytes(file_bytes, mime_type)
+        if not image_blobs:
+            return {}
+        content_items: list[dict] = [
+            {
+                "type": "input_text",
+                "text": (
+                    "Extract fields from the document images using this schema.\n"
+                    f"Schema:\n{json.dumps(json_schema)}"
+                ),
+            }
+        ]
+        for image_blob in image_blobs:
+            data_url = "data:image/png;base64," + base64.b64encode(image_blob).decode(
+                "ascii"
+            )
+            content_items.append({"type": "input_image", "image_url": data_url})
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content_items},
+        ]
+        return self._run_extraction(messages, json_schema)
+
+    def _run_extraction(self, messages: list[dict], json_schema: dict) -> dict:
         response = self._post_response(
             messages,
             response_format={
@@ -96,6 +137,51 @@ class OpenAILLMAdapter(LLMPort):
                 return {}
             parsed = self._parse_fields_response(response)
         return parsed
+
+    def _images_from_file_bytes(self, file_bytes: bytes, mime_type: str) -> list[bytes]:
+        images = self._load_images(file_bytes, mime_type)
+        encoded: list[bytes] = []
+
+        for image in images[: self._max_image_pages]:
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            encoded.append(buffer.getvalue())
+        return encoded
+
+    def _load_images(self, file_bytes: bytes, mime_type: str) -> list[object]:
+        if self._is_pdf_input(file_bytes, mime_type):
+            from pdf2image import convert_from_bytes
+
+            return convert_from_bytes(
+                file_bytes,
+                dpi=300,
+                first_page=1,
+                last_page=self._max_image_pages,
+            )
+        from PIL import Image
+
+        with Image.open(io.BytesIO(file_bytes)) as image:
+            return [image.copy()]
+
+    @staticmethod
+    def _is_pdf_input(file_bytes: bytes, mime_type: str) -> bool:
+        lowered = (mime_type or "").lower()
+        if lowered == "application/pdf":
+            return True
+        return file_bytes.lstrip().startswith(b"%PDF")
+
+    @staticmethod
+    def _build_extraction_system_prompt(instructions: str | None) -> str:
+        normalized = instructions.strip() if instructions else ""
+        instruction_line = f"{normalized}\n\n" if normalized else ""
+        return (
+            "You are a structured extraction assistant. "
+            f"{instruction_line}"
+            "Return JSON that matches the provided schema. "
+            "If a value is missing, return \"UNKNOWN\" for that field."
+        )
 
     def _build_messages(
         self, ocr_text: str, candidates: list[LabelFallbackCandidate]
@@ -198,7 +284,7 @@ class OpenAILLMAdapter(LLMPort):
 
     def _post_response(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         response_format: dict,
         max_tokens: int,
     ) -> dict | None:
@@ -274,7 +360,7 @@ class OpenAILLMAdapter(LLMPort):
         return data if isinstance(data, dict) else None
 
     @staticmethod
-    def _to_response_input(messages: list[dict[str, str]]) -> list[dict]:
+    def _to_response_input(messages: list[dict]) -> list[dict]:
         converted = []
         for message in messages:
             role = message.get("role")

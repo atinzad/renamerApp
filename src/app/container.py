@@ -16,6 +16,7 @@ from app.settings import (
     EMBEDDINGS_LOCAL_MODEL,
     EMBEDDINGS_MODEL,
     EMBEDDINGS_PROVIDER,
+    LLM_EXTRACT_MAX_IMAGE_PAGES,
     LLM_LABEL_MIN_CONFIDENCE,
     LLM_PROVIDER,
     OPENAI_API_KEY,
@@ -60,6 +61,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
             model=OPENAI_MODEL,
             base_url=OPENAI_BASE_URL,
             min_confidence=LLM_LABEL_MIN_CONFIDENCE,
+            max_image_pages=LLM_EXTRACT_MAX_IMAGE_PAGES,
         )
     storage = SQLiteStorage(sqlite_path)
     presets_service = PresetsService(storage)
@@ -72,7 +74,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
         ),
         "label_service": LabelService(drive, ocr, embeddings, storage),
         "llm_fallback_label_service": llm_fallback_label_service,
-        "extraction_service": ExtractionService(llm, storage),
+        "extraction_service": ExtractionService(llm, storage, drive),
         "schema_builder_service": SchemaBuilderService(storage, llm),
         "ocr_service": OCRService(drive, ocr, storage),
         "presets_service": presets_service,

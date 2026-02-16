@@ -18,6 +18,18 @@ class MockLLMAdapter(LLMPort):
         _ = instructions
         return {key: "UNKNOWN" for key in _schema_keys(schema)}
 
+    def extract_fields_from_image(
+        self,
+        schema: dict,
+        file_bytes: bytes,
+        mime_type: str,
+        instructions: str | None = None,
+    ) -> dict:
+        _ = file_bytes
+        _ = mime_type
+        _ = instructions
+        return {key: "UNKNOWN" for key in _schema_keys(schema)}
+
 
 def _schema_keys(schema: dict) -> list[str]:
     if not isinstance(schema, dict):

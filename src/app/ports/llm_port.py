@@ -16,3 +16,12 @@ class LLMPort(Protocol):
         self, schema: dict, ocr_text: str, instructions: str | None = None
     ) -> dict:
         """Extract structured fields from OCR text using the provided schema."""
+
+    def extract_fields_from_image(
+        self,
+        schema: dict,
+        file_bytes: bytes,
+        mime_type: str,
+        instructions: str | None = None,
+    ) -> dict:
+        """Extract structured fields from image/PDF bytes using the provided schema."""

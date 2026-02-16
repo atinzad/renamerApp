@@ -150,9 +150,11 @@ def main() -> None:
         )
         report_cols[0].caption("Required before classification.")
         classify_clicked = report_cols[1].button("Classify files")
-        report_cols[1].caption("Embedding + lexical, with LLM fallback on no-match.")
+        report_cols[1].caption(
+            "Embedding + lexical, with LLM fallback on no-match (uses OCR text)."
+        )
         extract_clicked = report_cols[2].button("Extract fields")
-        report_cols[2].caption("LLM-powered field extraction.")
+        report_cols[2].caption("LLM-powered field extraction from source image/PDF (not OCR text).")
         preview_report_clicked = report_cols[3].button("Preview Final Report")
         write_report_clicked = report_cols[4].button(
             "Write Final Report",
@@ -743,6 +745,7 @@ def main() -> None:
                                 _trigger_rerun()
                             except Exception as exc:
                                 st.error(f"Classification failed: {exc}")
+                        col_classify.caption("Uses OCR text.")
                         if col_extract.button(
                             "Extract fields",
                             key=f"extract_file_{file_ref.file_id}",
@@ -760,6 +763,7 @@ def main() -> None:
                                 _trigger_rerun()
                             except Exception as exc:
                                 st.error(f"Extraction failed: {exc}")
+                        col_extract.caption("Uses source image/PDF, not OCR text.")
 
                 suggestions = _build_suggested_names(files, current_selections)
                 suggested_name = suggestions.get(file_ref.file_id, "")

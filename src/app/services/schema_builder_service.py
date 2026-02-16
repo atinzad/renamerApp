@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.domain.schema_builder import (
     build_instruction_from_example,
@@ -62,6 +63,7 @@ class SchemaBuilderService:
             "from the Arabic label lines when present."
         )
         user_guidance = (guidance_override or "").strip()
+        allowed_fields = _extract_only_include_fields(user_guidance)
         guidance_prefix = ""
         if user_guidance:
             guidance_prefix = (
@@ -92,6 +94,9 @@ class SchemaBuilderService:
         if schema is None:
             schema, instructions = self._fallback_schema(ocr_text)
         schema = _sanitize_schema(schema, max_fields=15)
+        schema = _apply_allowed_fields_constraint(
+            schema, allowed_fields, max_fields=15
+        )
         refinement_payload = (
             "OCR text:\n"
             f"{ocr_text}\n\n"
@@ -104,6 +109,9 @@ class SchemaBuilderService:
             f"{guidance_prefix}{refine_guidance} {detected_hint}",
         )
         schema = _sanitize_schema(schema or {}, max_fields=15)
+        schema = _apply_allowed_fields_constraint(
+            schema, allowed_fields, max_fields=15
+        )
         if _count_array_fields(schema) > 3:
             retry_guidance = (
                 f"{guidance} Avoid arrays unless the OCR clearly lists multiple entries."
@@ -116,6 +124,9 @@ class SchemaBuilderService:
             if schema is None:
                 schema, instructions = self._fallback_schema(ocr_text)
             schema = _sanitize_schema(schema or {}, max_fields=15)
+            schema = _apply_allowed_fields_constraint(
+                schema, allowed_fields, max_fields=15
+            )
         if not schema.get("properties"):
             retry_guidance = (
                 f"{guidance} Return only the 10-15 most important fields. "
@@ -129,7 +140,13 @@ class SchemaBuilderService:
             if schema is None:
                 schema, instructions = self._fallback_schema(ocr_text)
             schema = _sanitize_schema(schema or {}, max_fields=15)
+            schema = _apply_allowed_fields_constraint(
+                schema, allowed_fields, max_fields=15
+            )
         instructions = build_instruction_from_example(schema)
+        instructions = _apply_instruction_guidance(
+            instructions, user_guidance, schema
+        )
         self._storage.update_label_extraction_schema(label_id, json.dumps(schema))
         self._storage.update_label_extraction_instructions(label_id, instructions)
         return schema, instructions
@@ -327,3 +344,133 @@ def _count_array_fields(schema: dict) -> int:
         if isinstance(subschema, dict) and subschema.get("type") == "array":
             count += 1
     return count
+
+
+def _extract_only_include_fields(guidance: str) -> list[str]:
+    if not guidance:
+        return []
+    patterns = [
+        r"\bonly include\b(?P<fields>[^.;\n]+)",
+        r"\binclude only\b(?P<fields>[^.;\n]+)",
+        r"\blimit(?:\s+the\s+schema|\s+fields)?\s+to\b(?P<fields>[^.;\n]+)",
+        r"\brestrict(?:\s+the\s+schema|\s+fields)?\s+to\b(?P<fields>[^.;\n]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, guidance, flags=re.IGNORECASE)
+        if not match:
+            continue
+        return _parse_guidance_field_names(match.group("fields"))
+    if _looks_restrictive(guidance):
+        action_match = re.search(
+            r"\b(?:extract|return|output|keep|use)\b(?P<fields>[^.\n;]+)",
+            guidance,
+            flags=re.IGNORECASE,
+        )
+        if action_match:
+            parsed = _parse_guidance_field_names(action_match.group("fields"))
+            if parsed:
+                return parsed
+    return []
+
+
+def _parse_guidance_field_names(value: str) -> list[str]:
+    normalized_value = value.replace("\n", " ")
+    normalized_value = re.sub(r"\b(and|or)\b", ",", normalized_value, flags=re.IGNORECASE)
+    parts = re.split(r"[,/|]", normalized_value)
+    fields: list[str] = []
+    seen: set[str] = set()
+    for raw_part in parts:
+        candidate = raw_part.strip(" .:;\"'`[](){}")
+        candidate = re.sub(r"^(?:the|a|an)\s+", "", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r"\bfields?\b$", "", candidate, flags=re.IGNORECASE)
+        if not candidate:
+            continue
+        field_name = _normalize_label_key(candidate)
+        field_name = _canonicalize_guidance_key(field_name)
+        if not _is_valid_key(field_name):
+            continue
+        if field_name in seen:
+            continue
+        seen.add(field_name)
+        fields.append(field_name)
+    return fields
+
+
+def _apply_allowed_fields_constraint(
+    schema: dict, allowed_fields: list[str], max_fields: int = 15
+) -> dict:
+    if not allowed_fields:
+        return schema
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    if not isinstance(properties, dict):
+        properties = {}
+    constrained: dict[str, dict] = {}
+    for field_name in allowed_fields[:max_fields]:
+        candidate_schema = properties.get(field_name, {"type": "string"})
+        constrained[field_name] = _sanitize_subschema(field_name, candidate_schema)
+    return {
+        "type": "object",
+        "properties": constrained,
+        "required": list(constrained.keys()),
+        "additionalProperties": False,
+    }
+
+
+def _looks_restrictive(guidance: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(nothing else|no other fields?|and nothing else|only these fields?)\b",
+            guidance,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _canonicalize_guidance_key(field_name: str) -> str:
+    alias_map = {
+        "civil_id_number": "civil_number",
+        "civil_id_no": "civil_number",
+        "civil_id": "civil_number",
+        "expiry": "expiry_date",
+        "expiration": "expiry_date",
+        "expiration_date": "expiry_date",
+        "date_of_expiry": "expiry_date",
+        "full_name": "name",
+    }
+    return alias_map.get(field_name, field_name)
+
+
+def _apply_instruction_guidance(
+    instructions: str, user_guidance: str, schema: dict
+) -> str:
+    if not _guidance_requests_pattern_inference(user_guidance):
+        return instructions
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    field_names = list(properties.keys()) if isinstance(properties, dict) else []
+    field_list = ", ".join(field_names)
+    if field_list:
+        guidance_line = (
+            "When labels are noisy, infer values using text patterns for these fields: "
+            f"{field_list}."
+        )
+    else:
+        guidance_line = (
+            "When labels are noisy, infer values using text patterns for requested fields."
+        )
+    if guidance_line in instructions:
+        return instructions
+    if instructions.strip():
+        return f"{instructions.strip()} {guidance_line}"
+    return guidance_line
+
+
+def _guidance_requests_pattern_inference(user_guidance: str) -> bool:
+    if not user_guidance:
+        return False
+    return bool(
+        re.search(
+            r"\b(detect|infer|use)\b.*\bpattern",
+            user_guidance,
+            flags=re.IGNORECASE,
+        )
+    )

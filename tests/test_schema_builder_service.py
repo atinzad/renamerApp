@@ -59,3 +59,59 @@ def test_build_from_ocr_guidance_override_is_prompt_not_ocr_text() -> None:
     assert stored_schema == schema
     assert "document_number" in stored_schema.get("properties", {})
     assert storage.instructions_updates
+
+
+def test_build_from_ocr_only_include_guidance_is_enforced() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = "Only include issuer_name, document_number, and issue_date."
+    ocr_text = "Document Number: 12345\nIssuer: Ministry of Interior"
+
+    schema, _ = service.build_from_ocr(
+        "label-1", ocr_text, guidance_override=guidance
+    )
+
+    properties = schema.get("properties", {})
+    assert set(properties.keys()) == {"issuer_name", "document_number", "issue_date"}
+    assert properties["issue_date"] == {"type": "string"}
+    assert schema.get("required") == ["issuer_name", "document_number", "issue_date"]
+
+
+def test_build_from_ocr_include_only_guidance_is_enforced() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = "Include only commercial_registry_number and company_status."
+    ocr_text = "Status: Active\nRegistry: 998877"
+
+    schema, _ = service.build_from_ocr(
+        "label-1", ocr_text, guidance_override=guidance
+    )
+
+    properties = schema.get("properties", {})
+    assert set(properties.keys()) == {"commercial_registry_number", "company_status"}
+    assert schema.get("required") == ["commercial_registry_number", "company_status"]
+
+
+def test_build_from_ocr_extract_nothing_else_and_patterns_guidance() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = (
+        "Extract the Civil ID number, the Name, and the Expiry Date. "
+        "Nothing else. Detect patterns and add them to the Extraction instructions."
+    )
+    ocr_text = "Civil ID: 287012345678\nName: John Doe\nExpiry Date: 2028-01-31"
+
+    _, instructions = service.build_from_ocr(
+        "label-1", ocr_text, guidance_override=guidance
+    )
+
+    stored_schema = json.loads(storage.schema_updates[-1][1])
+    properties = stored_schema.get("properties", {})
+    assert set(properties.keys()) == {"civil_number", "name", "expiry_date"}
+    assert "text patterns" in instructions.lower()

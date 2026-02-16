@@ -13,6 +13,11 @@ class DummyLLM:
     def extract_fields(self, schema: dict, ocr_text: str) -> dict:
         return {}
 
+    def extract_fields_from_image(
+        self, schema: dict, file_bytes: bytes, mime_type: str
+    ) -> dict:
+        return {}
+
 
 def test_llm_port_runtime_checkable() -> None:
     dummy = DummyLLM()

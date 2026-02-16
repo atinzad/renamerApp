@@ -29,6 +29,27 @@ class _RecordingLLM(LLMPort):
         self.calls.append(_LLMCall(text=ocr_text, candidates=candidates))
         return self._response
 
+    def extract_fields(
+        self, schema: dict, ocr_text: str, instructions: str | None = None
+    ) -> dict:
+        _ = schema
+        _ = ocr_text
+        _ = instructions
+        return {}
+
+    def extract_fields_from_image(
+        self,
+        schema: dict,
+        file_bytes: bytes,
+        mime_type: str,
+        instructions: str | None = None,
+    ) -> dict:
+        _ = schema
+        _ = file_bytes
+        _ = mime_type
+        _ = instructions
+        return {}
+
 
 def _setup_job(storage) -> str:
     job = storage.create_job("folder")
