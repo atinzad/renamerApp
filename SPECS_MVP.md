@@ -36,9 +36,9 @@
 ### 1.1.1 Dynamic schema-driven agent hydration (must remain true)
 - Layer B (Services) is responsible for agent hydration:
   - Fetch label-specific extraction_schema and naming_template from storage.
-  - Pass schema + OCR text to LLMPort for structured output.
+  - Pass schema + document input to LLMPort for structured output.
 - Layer E (Adapters) must remain dumb:
-  - Adapters accept schema + text and return structured JSON output.
+  - Adapters accept schema + input context (text or image/PDF bytes) and return structured JSON output.
   - Adapters do not contain label-specific logic or hard-coded extractors.
 - Single-file mandate for Streamlit UI remains intact (single entrypoint, no multi-page UI).
 
@@ -61,7 +61,7 @@
 - Applying rename MUST write an undo record BEFORE renaming any file.
 - Undo MUST restore prior names.
 - LLMs MUST NEVER directly rename files or produce final report formatting.
-  - (LLMs are allowed only to interpret OCR text into labels/types/fields.)
+  - (LLMs are allowed only to interpret OCR text and/or source document content into labels/types/fields.)
 
 ### 1.4 Configuration
 - All runtime configuration MUST be in `app.settings` (environment variables + defaults).
@@ -517,7 +517,7 @@ Notes:
 ## 10. INCREMENT 6 SPEC — Field Extraction (Reporting + Decision Support)
 ### 10.1 Scope (MUST implement)
 - Use a single Dynamic Extractor Agent hydrated at runtime
-- Extraction uses OCR text, label-specific JSON schema, and label-specific instructions to produce structured fields
+- Extraction uses source image/PDF content, label-specific JSON schema, and label-specific instructions to produce structured fields
 - Extracted fields are stored and rendered into the report for downstream review/decision making
 - No filename proposal logic in this increment
 
@@ -534,12 +534,15 @@ For each file:
   - If required field missing -> include placeholder "UNKNOWN"
   - Or mark as “needs review” in extracted fields
 - Example-driven schema builder:
-  - User provides an OCR example for a label
-  - System generates extraction_schema_json + extraction_instructions
+  - User provides OCR examples and optional schema guidance for a label
+  - If optional guidance is present, guidance takes precedence for schema generation
+  - Otherwise system generates extraction_schema_json + extraction_instructions from OCR context with relevance filtering
 
 ### 10.4 Port requirements
 - LLMPort MUST add a generic “extract_fields” method:
   - extract_fields(schema: dict, ocr_text: str, instructions: str | None = None) -> dict
+- LLMPort MUST add image/PDF extraction:
+  - extract_fields_from_image(schema: dict, file_bytes: bytes, mime_type: str, instructions: str | None = None) -> dict
 - LLMAdapter MUST use structured output (JSON mode) to satisfy the provided schema
 - StoragePort methods to store extraction results
 - StoragePort MUST support label extraction instructions
@@ -548,11 +551,12 @@ For each file:
 - ExtractionService
   - extract_fields_for_job(job_id) -> None
   - Fetch label schema + extraction instructions from storage and hydrate the extractor per file
-  - Pass schema + OCR text + instructions to LLMPort for structured output
+  - Pass schema + source image/PDF bytes + instructions to LLMPort for structured output
   - Store extraction results
   - No naming proposal service in this increment
 - SchemaBuilderService
   - build_from_ocr(label_id, ocr_text) -> (schema, instructions)
+  - Guidance-first behavior: if optional guidance is provided, schema generation uses guidance as the source of truth
   - Persists extraction_schema_json and extraction_instructions
 
 ### 10.6 Storage changes (SQLite)
@@ -564,18 +568,20 @@ For each file:
   - For each label: define extraction_schema (JSON)
   - For each label: define extraction_instructions (text)
   - “Build schema from OCR example” action that generates schema + instructions
+    - Optional schema guidance takes precedence over OCR when provided
     - Schema generation uses an LLM with a refinement pass
     - Cap schemas at 15 fields; use concise English snake_case keys
     - Arrays only when explicitly justified (plural list fields); otherwise strings
 - Job page:
   - Button: “Extract fields”
   - For each file: show extracted fields (expandable)
+  - Extraction uses source image/PDF input (OCR remains for classification)
 
 ### 10.8 Acceptance criteria
 - At least one extractor works end-to-end
 - Extracted fields are stored and visible in the report/UI
 - Warnings are produced for missing/uncertain fields
-- Labels support extraction instructions and OCR-driven schema generation
+- Labels support extraction instructions and guidance-first/OCR-fallback schema generation
 
 ## 11. INCREMENT 7 SPEC — Final Report (Latest Job Only)
 ### 11.1 Scope (MUST implement)

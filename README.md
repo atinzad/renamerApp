@@ -48,9 +48,12 @@ Increment 6 (Field Extraction):
 - Set `LLM_PROVIDER=openai`
 - Set `OPENAI_API_KEY=...`
 - In Labels view, generate schema + instructions from OCR examples or edit them directly.
+  - If **Optional schema guidance** is provided, schema generation uses guidance as the source
+    of truth and does not rely on OCR content for field selection.
   - Schema generation uses an LLM with a refinement pass to limit fields to 15 and
     enforce sensible array vs string types.
 - Run OCR, then click **Extract fields** in the Job actions or per-file controls.
+  - Classification uses OCR text; extraction uses the source image/PDF bytes.
 
 ## Authentication (OAuth)
 Users cannot sign in with a raw email/password. Google Drive access requires OAuth.
@@ -82,6 +85,7 @@ LLM_PROVIDER=openai             # optional (LLM fallback)
 OPENAI_API_KEY=...              # optional (LLM fallback)
 OPENAI_MODEL=...                # optional (LLM fallback)
 LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
+LLM_EXTRACT_MAX_IMAGE_PAGES=3   # optional (image/PDF extraction page cap)
 MATCH_THRESHOLD=0.6             # embeddings similarity threshold
 LEXICAL_MATCH_THRESHOLD=0.35    # token similarity threshold
 AMBIGUITY_MARGIN=0.02           # margin to avoid ambiguous matches
@@ -106,7 +110,7 @@ OCR_WORKERS=4
 ```
 For PDFs, the app will attempt to use a text layer (via `pdfminer.six`) before
 rasterizing pages for OCR. For scans/photos, OCR runs two passes (raw + preprocessed)
-and merges the text for downstream LLM extraction.
+and merges the text for downstream classification and schema-generation context.
 
 ### Classification thresholds
 Classification uses embeddings when available, otherwise lexical token overlap.
@@ -145,7 +149,8 @@ If `http://localhost:8080/` is not reachable (for example when running in WSL or
    - If similarity is below threshold, LLM fallback runs automatically (if configured).
    - The UI shows the best candidate and all candidate scores.
 9) In **Labels**, edit schema + instructions or generate them from OCR examples.
-10) Click **Extract fields** (job-level or per-file) to populate extracted fields.
+   - If optional schema guidance is filled, guidance takes precedence over OCR during schema generation.
+10) Click **Extract fields** (job-level or per-file) to populate extracted fields from source image/PDF bytes.
 11) Rename fields auto-fill with `Label[_NN].ext` for MATCHED files; edit if needed.
 12) Click **Preview** to see the rename plan.
 13) Click **Apply Rename** to rename files in Drive.
@@ -198,6 +203,6 @@ env PYTHONPATH=src uv run python scripts/compare_llm_fallback_strategies.py --oc
 ## Notes
 - Labels are local and stored in SQLite (`app.db`, gitignored).
 - LLM fallback suggestions are optional and do not override labels.
-- Field extraction is implemented and stored per file.
+- Field extraction is implemented and stored per file (source image/PDF input, not OCR text).
 - The Drive adapter skips `text/plain` files when listing a folder.
 - Local embeddings are not included in this repo; use OpenAI embeddings or dummy.
