@@ -22,6 +22,7 @@ from app.settings import (
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OPENAI_MODEL,
+    OPENAI_VISION_MODEL,
 )
 from app.services.jobs_service import JobsService
 from app.services.label_classification_service import LabelClassificationService
@@ -59,6 +60,7 @@ def build_services(access_token: str, sqlite_path: str) -> dict[str, Any]:
         llm = OpenAILLMAdapter(
             api_key=OPENAI_API_KEY,
             model=OPENAI_MODEL,
+            vision_model=OPENAI_VISION_MODEL,
             base_url=OPENAI_BASE_URL,
             min_confidence=LLM_LABEL_MIN_CONFIDENCE,
             max_image_pages=LLM_EXTRACT_MAX_IMAGE_PAGES,

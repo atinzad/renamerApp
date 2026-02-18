@@ -8,6 +8,7 @@ def _adapter(min_confidence: float = 0.75) -> OpenAILLMAdapter:
     return OpenAILLMAdapter(
         api_key="test",
         model="mock",
+        vision_model=None,
         base_url="https://example.com",
         min_confidence=min_confidence,
     )
@@ -50,10 +51,11 @@ def test_openai_adapter_extract_fields_from_image_sends_input_images(monkeypatch
     adapter = _adapter()
     captured: dict[str, object] = {}
 
-    def _fake_post(messages, response_format, max_tokens):
+    def _fake_post(messages, response_format, max_tokens, model):
         captured["messages"] = messages
         captured["response_format"] = response_format
         captured["max_tokens"] = max_tokens
+        captured["model"] = model
         return {"output_text": json.dumps({"civil_id": "123456789012"})}
 
     monkeypatch.setattr(adapter, "_post_response", _fake_post)
@@ -86,12 +88,41 @@ def test_openai_adapter_extract_fields_from_image_sends_input_images(monkeypatch
         "schema": {"type": "object", "properties": {"civil_id": {"type": "string"}}},
         "strict": True,
     }
+    assert captured["model"] == "mock"
+
+
+def test_openai_adapter_extract_fields_from_image_uses_vision_model(monkeypatch) -> None:
+    adapter = OpenAILLMAdapter(
+        api_key="test",
+        model="text-model",
+        vision_model="vision-model",
+        base_url="https://example.com",
+        min_confidence=0.75,
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_post(messages, response_format, max_tokens, model):
+        captured["model"] = model
+        return {"output_text": json.dumps({"civil_id": "123456789012"})}
+
+    monkeypatch.setattr(adapter, "_post_response", _fake_post)
+    monkeypatch.setattr(adapter, "_images_from_file_bytes", lambda *_args, **_kwargs: [b"a"])
+
+    adapter.extract_fields_from_image(
+        schema={"type": "object", "properties": {"civil_id": {"type": "string"}}},
+        file_bytes=b"img",
+        mime_type="image/png",
+        instructions=None,
+    )
+
+    assert captured["model"] == "vision-model"
 
 
 def test_openai_adapter_image_page_cap_is_applied(monkeypatch) -> None:
     adapter = OpenAILLMAdapter(
         api_key="test",
         model="mock",
+        vision_model=None,
         base_url="https://example.com",
         min_confidence=0.75,
         max_image_pages=2,

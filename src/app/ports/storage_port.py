@@ -33,6 +33,9 @@ class StoragePort(Protocol):
     def save_job_files(self, job_id: str, files: list[FileRef]) -> None:
         """Persist job file references."""
 
+    def hydrate_job_cached_data(self, job_id: str, file_ids: list[str]) -> None:
+        """Copy latest cached per-file job-scoped data from prior jobs into this job."""
+
     def get_job_files(self, job_id: str) -> list[FileRef]:
         """Return file references for a job."""
 

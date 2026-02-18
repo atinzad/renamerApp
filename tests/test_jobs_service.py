@@ -26,6 +26,9 @@ def test_create_job_saves_files() -> None:
     assert result == job
     drive.list_folder_files.assert_called_once_with(job.folder_id)
     storage.save_job_files.assert_called_once_with(job.job_id, files)
+    storage.hydrate_job_cached_data.assert_called_once_with(
+        job.job_id, [file_ref.file_id for file_ref in files]
+    )
 
 
 def test_list_files_missing_job_raises() -> None:

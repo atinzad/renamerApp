@@ -14,6 +14,9 @@ class JobsService:
         job = self._storage.create_job(folder_id)
         files = self._drive.list_folder_files(folder_id)
         self._storage.save_job_files(job.job_id, files)
+        self._storage.hydrate_job_cached_data(
+            job.job_id, [file_ref.file_id for file_ref in files]
+        )
         return job
 
     def list_files(self, job_id: str) -> list[FileRef]:

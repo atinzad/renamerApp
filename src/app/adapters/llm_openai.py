@@ -22,9 +22,12 @@ class OpenAILLMAdapter(LLMPort):
         base_url: str,
         min_confidence: float,
         max_image_pages: int = 3,
+        vision_model: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
+        normalized_vision_model = (vision_model or "").strip()
+        self._vision_model = normalized_vision_model or model
         self._base_url = base_url.rstrip("/")
         self._min_confidence = min_confidence
         self._max_image_pages = max(1, int(max_image_pages))
@@ -47,6 +50,7 @@ class OpenAILLMAdapter(LLMPort):
             messages,
             response_format={"type": "json_object"},
             max_tokens=400,
+            model=self._model,
         )
         if payload is None:
             return LabelFallbackClassification(
@@ -77,7 +81,7 @@ class OpenAILLMAdapter(LLMPort):
                 ),
             },
         ]
-        return self._run_extraction(messages, json_schema)
+        return self._run_extraction(messages, json_schema, model=self._model)
 
     def extract_fields_from_image(
         self,
@@ -113,9 +117,9 @@ class OpenAILLMAdapter(LLMPort):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": content_items},
         ]
-        return self._run_extraction(messages, json_schema)
+        return self._run_extraction(messages, json_schema, model=self._vision_model)
 
-    def _run_extraction(self, messages: list[dict], json_schema: dict) -> dict:
+    def _run_extraction(self, messages: list[dict], json_schema: dict, model: str) -> dict:
         response = self._post_response(
             messages,
             response_format={
@@ -125,6 +129,7 @@ class OpenAILLMAdapter(LLMPort):
                 "strict": True,
             },
             max_tokens=800,
+            model=model,
         )
         parsed = self._parse_fields_response(response) if response else {}
         if not parsed:
@@ -132,6 +137,7 @@ class OpenAILLMAdapter(LLMPort):
                 messages,
                 response_format={"type": "json_object"},
                 max_tokens=800,
+                model=model,
             )
             if response is None:
                 return {}
@@ -287,6 +293,7 @@ class OpenAILLMAdapter(LLMPort):
         messages: list[dict],
         response_format: dict,
         max_tokens: int,
+        model: str,
     ) -> dict | None:
         input_items = self._to_response_input(messages)
         try:
@@ -297,7 +304,7 @@ class OpenAILLMAdapter(LLMPort):
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": self._model,
+                    "model": model,
                     "input": input_items,
                     "text": {"format": response_format},
                     "temperature": 0.0,

@@ -118,6 +118,23 @@ class SQLiteStorage(StoragePort):
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to save job files") from exc
 
+    def hydrate_job_cached_data(self, job_id: str, file_ids: list[str]) -> None:
+        unique_file_ids = sorted(
+            {
+                str(file_id).strip()
+                for file_id in file_ids
+                if isinstance(file_id, str) and file_id.strip()
+            }
+        )
+        if not unique_file_ids:
+            return
+        try:
+            with self._connect() as conn:
+                for chunk in self._chunked(unique_file_ids, 200):
+                    self._hydrate_job_cached_data_chunk(conn, job_id, chunk)
+        except sqlite3.Error as exc:
+            raise RuntimeError("Failed to hydrate job cached data") from exc
+
     def get_job_files(self, job_id: str) -> list[FileRef]:
         try:
             with self._connect() as conn:
@@ -161,6 +178,110 @@ class SQLiteStorage(StoragePort):
             ]
         except sqlite3.Error as exc:
             raise RuntimeError("Failed to fetch full job files") from exc
+
+    def _hydrate_job_cached_data_chunk(
+        self, conn: sqlite3.Connection, job_id: str, file_ids: list[str]
+    ) -> None:
+        if not file_ids:
+            return
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="file_label_assignments",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["label_id", "score", "status"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="file_label_overrides",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["label_id"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="doc_type_classifications",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["doc_type", "confidence", "signals_json"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="doc_type_overrides",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["doc_type"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="llm_label_classifications",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["label_name", "confidence", "signals_json"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="llm_label_overrides",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["label_name"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="extractions",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["schema_json", "fields_json", "confidences_json"],
+        )
+        self._copy_latest_rows_between_jobs(
+            conn,
+            table="file_timings",
+            job_id=job_id,
+            file_ids=file_ids,
+            value_columns=["ocr_ms", "classify_ms", "extract_ms"],
+        )
+
+    def _copy_latest_rows_between_jobs(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        job_id: str,
+        file_ids: list[str],
+        value_columns: list[str],
+    ) -> None:
+        if not value_columns:
+            return
+        placeholders = ", ".join("?" for _ in file_ids)
+        value_list = ", ".join(value_columns)
+        update_list = ", ".join(
+            [f"{column} = excluded.{column}" for column in value_columns]
+            + ["updated_at = excluded.updated_at"]
+        )
+        conn.execute(
+            f"""
+            WITH ranked AS (
+                SELECT file_id, {value_list}, updated_at, job_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY file_id
+                        ORDER BY COALESCE(updated_at, '') DESC, job_id DESC
+                    ) AS row_num
+                FROM {table}
+                WHERE job_id <> ? AND file_id IN ({placeholders})
+            )
+            INSERT INTO {table}(job_id, file_id, {value_list}, updated_at)
+            SELECT ?, file_id, {value_list}, updated_at
+            FROM ranked
+            WHERE row_num = 1
+            ON CONFLICT(job_id, file_id)
+            DO UPDATE SET
+                {update_list}
+            """,
+            (job_id, *file_ids, job_id),
+        )
+
+    @staticmethod
+    def _chunked(values: list[str], size: int) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
 
     def save_applied_renames(
         self, job_id: str, ops: list[RenameOp], applied_at_iso: str

@@ -77,6 +77,7 @@ Optional (LLM fallback):
 Increment 6 (Field Extraction):
 - Set `LLM_PROVIDER=openai`
 - Set `OPENAI_API_KEY=...`
+- Set `OPENAI_VISION_MODEL=...` (recommended for stronger image/PDF extraction)
 - In Labels view, generate schema + instructions from OCR examples or edit them directly.
   - If **Optional schema guidance** is provided, schema generation uses guidance as the source
     of truth and does not rely on OCR content for field selection.
@@ -113,7 +114,8 @@ GOOGLE_DRIVE_ACCESS_TOKEN=...   # optional fallback
 TEST_SQLITE_PATH=./app.db       # optional override for scripts
 LLM_PROVIDER=openai             # optional (LLM fallback)
 OPENAI_API_KEY=...              # optional (LLM fallback)
-OPENAI_MODEL=...                # optional (LLM fallback)
+OPENAI_MODEL=...                # optional text model (LLM fallback + schema generation)
+OPENAI_VISION_MODEL=...         # optional vision model (image/PDF extraction)
 LLM_LABEL_MIN_CONFIDENCE=0.75   # optional (LLM fallback)
 LLM_EXTRACT_MAX_IMAGE_PAGES=3   # optional (image/PDF extraction page cap)
 MATCH_THRESHOLD=0.6             # embeddings similarity threshold

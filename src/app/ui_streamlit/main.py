@@ -116,12 +116,31 @@ def main() -> None:
                 raise RuntimeError("Folder ID is required.")
             job = services["jobs_service"].create_job(extracted_folder_id)
             files = services["jobs_service"].list_files(job.job_id)
+            storage = services["storage"]
+            ocr_ready_count = 0
+            classified_count = 0
+            extracted_count = 0
+            for file_ref in files:
+                ocr_result = storage.get_ocr_result(job.job_id, file_ref.file_id)
+                if ocr_result and ocr_result.text.strip():
+                    ocr_ready_count += 1
+                if storage.get_file_label_assignment(job.job_id, file_ref.file_id):
+                    classified_count += 1
+                if storage.get_extraction(job.job_id, file_ref.file_id):
+                    extracted_count += 1
             st.session_state["job_id"] = job.job_id
             st.session_state["files"] = files
             st.session_state["preview_ops"] = []
             st.session_state["preview_notice"] = ""
-            st.session_state["ocr_ready"] = False
-            st.info(f"Listed {len(files)} files from Drive. Job ID: {job.job_id}")
+            st.session_state["classification_results"] = {}
+            st.session_state["label_selections"] = {}
+            st.session_state["ocr_ready"] = bool(files) and ocr_ready_count == len(files)
+            st.info(
+                f"Listed {len(files)} files from Drive. Job ID: {job.job_id}. "
+                f"DB reuse: OCR {ocr_ready_count}/{len(files)}, "
+                f"classification {classified_count}/{len(files)}, "
+                f"extraction {extracted_count}/{len(files)}."
+            )
         except Exception as exc:
             st.error(f"List files failed: {exc}")
 
@@ -341,6 +360,7 @@ def main() -> None:
         ocr_status: dict[str, dict[str, bool]] = {}
         file_timings: dict[str, dict[str, int | None]] = {}
         stored_classification_labels: dict[str, str] = {}
+        stored_assignments: dict[str, object] = {}
         extraction_done: dict[str, bool] = {}
         if storage and job_id:
             for file_ref in files:
@@ -366,10 +386,12 @@ def main() -> None:
                     assignment = storage.get_file_label_assignment(job_id, file_ref.file_id)
                 except Exception:
                     assignment = None
-                if assignment and assignment.label_id:
-                    stored_classification_labels[file_ref.file_id] = label_name_by_id.get(
-                        assignment.label_id, assignment.label_id
-                    )
+                if assignment:
+                    stored_assignments[file_ref.file_id] = assignment
+                    if assignment.label_id:
+                        stored_classification_labels[file_ref.file_id] = label_name_by_id.get(
+                            assignment.label_id, assignment.label_id
+                        )
                 try:
                     extraction_done[file_ref.file_id] = bool(
                         storage.get_extraction(job_id, file_ref.file_id)
@@ -573,6 +595,19 @@ def main() -> None:
                             )
                         with st.expander("All candidate scores", expanded=False):
                             st.table(rows)
+                elif file_ref.file_id in stored_assignments:
+                    assignment = stored_assignments[file_ref.file_id]
+                    assignment_label = None
+                    assignment_label_id = getattr(assignment, "label_id", None)
+                    if assignment_label_id:
+                        assignment_label = label_name_by_id.get(
+                            assignment_label_id, assignment_label_id
+                        )
+                    score = float(getattr(assignment, "score", 0.0) or 0.0)
+                    status = str(getattr(assignment, "status", NO_MATCH))
+                    label_text = assignment_label or "—"
+                    st.write(f"Stored classification: {label_text} ({score * 100:.1f}%)")
+                    st.caption(f"Status: {status}")
 
                 llm_signals: list[str] = []
                 llm_override = llm_overrides.get(file_ref.file_id)
