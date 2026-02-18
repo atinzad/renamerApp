@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import re
 import socketserver
 import tempfile
 import threading
@@ -29,6 +30,11 @@ _OAUTH_ERROR: str | None = None
 _OAUTH_EVENT = threading.Event()
 _OAUTH_SERVER_STARTED = False
 _OAUTH_RESULT_FILE = Path(tempfile.gettempdir()) / "renamerapp_oauth_result.json"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _REPO_ROOT / ".env"
+_ENV_ACCESS_TOKEN_PATTERN = re.compile(
+    r"^\s*(?:export\s+)?GOOGLE_DRIVE_ACCESS_TOKEN\s*="
+)
 
 
 @dataclass(frozen=True)
@@ -196,6 +202,32 @@ def _extract_code_from_redirect(value: str) -> str | None:
     return params.get("code", [None])[0]
 
 
+def _persist_access_token_to_env(access_token: str) -> None:
+    normalized = (access_token or "").strip()
+    if not normalized:
+        return
+    entry = f'GOOGLE_DRIVE_ACCESS_TOKEN="{_escape_env_value(normalized)}"'
+    try:
+        lines = _ENV_FILE.read_text().splitlines() if _ENV_FILE.exists() else []
+        updated = False
+        for index, line in enumerate(lines):
+            if _ENV_ACCESS_TOKEN_PATTERN.match(line):
+                lines[index] = entry
+                updated = True
+                break
+        if not updated:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(entry)
+        _ENV_FILE.write_text("\n".join(lines) + "\n")
+    except Exception:
+        return
+
+
+def _escape_env_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _persist_token_data(token_data: dict, client_id: str, client_secret: str) -> bool:
     access_token = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token")
@@ -213,6 +245,7 @@ def _persist_token_data(token_data: dict, client_id: str, client_secret: str) ->
     st.session_state["access_expires_at"] = time.time() + expires_in - 60
     st.session_state["manual_access_token"] = access_token
     st.session_state["oauth_in_progress"] = False
+    _persist_access_token_to_env(access_token)
     return keyring_failed
 
 
@@ -231,9 +264,13 @@ def ensure_access_token(manual_token: str, client_id: str, client_secret: str) -
         expires_in = int(token_data.get("expires_in", 3600))
         st.session_state["access_token"] = access_token
         st.session_state["access_expires_at"] = time.time() + expires_in - 60
+        st.session_state["manual_access_token"] = access_token
+        _persist_access_token_to_env(access_token)
         return access_token
 
     if manual_token:
+        st.session_state["manual_access_token"] = manual_token
+        _persist_access_token_to_env(manual_token)
         return manual_token
 
     raise RuntimeError("No access token available. Sign in or paste a manual token.")
