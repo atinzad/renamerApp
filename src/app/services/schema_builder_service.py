@@ -70,13 +70,16 @@ class SchemaBuilderService:
             "The schema must be a JSON schema object with type, properties, required, and "
             "additionalProperties=false. Use boolean only for true/false flags; otherwise use string. "
             "Use arrays only for clear repeated entities (people/items/activities). "
-            "If OCR is noisy, infer likely business-relevant fields instead of literal gibberish labels."
+            "If OCR is noisy, infer likely business-relevant fields instead of literal gibberish labels. "
+            "Include a brief 'description' for each field explaining what value to extract "
+            "and its expected format (e.g., 'DD/MM/YYYY date', '12-digit number')."
         )
         refine_guidance = (
             "Review the proposed schema and refine it using OCR context. "
             "Keep only document-relevant fields and remove noisy OCR artifacts. "
             "Array fields must use plural names; singular fields must not be arrays. "
-            "Ensure no more than 15 fields. Output concise English snake_case keys."
+            "Ensure no more than 15 fields. Output concise English snake_case keys. "
+            "Preserve field descriptions. If missing, add brief descriptions."
         )
         example = self._ocr_text_to_example(ocr_context)
         detected_fields = sorted(example.keys())
@@ -155,7 +158,9 @@ class SchemaBuilderService:
                 "Ignore OCR text entirely. "
                 "Use concise English snake_case keys only. "
                 "Limit schema to at most 15 document-relevant fields. "
-                "Return a JSON schema object with type, properties, required, and additionalProperties=false."
+                "Return a JSON schema object with type, properties, required, and additionalProperties=false. "
+                "Include a brief 'description' for each field explaining what value to extract "
+                "and its expected format (e.g., 'DD/MM/YYYY date', '12-digit number')."
             )
             schema, _ = self._attempt_llm_schema(
                 schema_request,
@@ -343,12 +348,20 @@ def _sanitize_schema(schema: dict, max_fields: int = 15) -> dict:
 def _sanitize_subschema(key: str, schema: object) -> dict:
     if isinstance(schema, dict):
         schema_type = schema.get("type")
+        desc = schema.get("description")
+        base: dict
         if schema_type in {"string", "boolean", "number", "integer"}:
-            return {"type": schema_type}
-        if schema_type == "array":
+            base = {"type": schema_type}
+        elif schema_type == "array":
             if _array_key_is_plural(key):
-                return {"type": "array", "items": {"type": "string"}}
-            return {"type": "string"}
+                base = {"type": "array", "items": {"type": "string"}}
+            else:
+                base = {"type": "string"}
+        else:
+            base = {"type": "string"}
+        if isinstance(desc, str) and desc.strip():
+            base["description"] = desc.strip()
+        return base
     return {"type": "string"}
 
 
@@ -623,10 +636,34 @@ def _extract_guidance_fields(guidance: str) -> list[str]:
     return []
 
 
+_FIELD_DESCRIPTIONS: dict[str, str] = {
+    "civil_number": "Civil ID number as printed on the card",
+    "name": "Full name as it appears on the document",
+    "expiry_date": "Expiry/expiration date",
+    "issue_date": "Issue date",
+    "date_of_birth": "Date of birth",
+    "address": "Full address",
+    "nationality": "Nationality",
+    "gender": "Gender (Male/Female)",
+    "document_number": "Document reference number",
+    "iban": "IBAN bank account number",
+    "company_name": "Company or organization name",
+    "commercial_registry_number": "Commercial registry number",
+    "license_number": "License number",
+    "phone": "Phone number",
+    "email": "Email address",
+    "signature_present": "Whether a signature is present (true/false)",
+}
+
+
 def _schema_from_guidance_fields(fields: list[str], guidance: str) -> dict:
     properties: dict[str, dict] = {}
     for field_name in fields[:15]:
-        properties[field_name] = _infer_guidance_field_schema(field_name, guidance)
+        prop = _infer_guidance_field_schema(field_name, guidance)
+        desc = _FIELD_DESCRIPTIONS.get(field_name)
+        if desc:
+            prop["description"] = desc
+        properties[field_name] = prop
     return {
         "type": "object",
         "properties": properties,

@@ -54,6 +54,21 @@ class DummyDrive:
         raise NotImplementedError
 
 
+class ErrorLLM(DummyLLM):
+    def extract_fields_from_image(
+        self,
+        schema: dict,
+        file_bytes: bytes,
+        mime_type: str,
+        instructions: str | None = None,
+    ) -> dict:
+        _ = schema
+        _ = file_bytes
+        _ = mime_type
+        _ = instructions
+        raise RuntimeError("OpenAI responses API error 400: unsupported model")
+
+
 def test_extraction_service_stores_fields(tmp_path) -> None:
     storage = SQLiteStorage(str(tmp_path / "test.db"))
     job = storage.create_job("folder-1")
@@ -81,3 +96,34 @@ def test_extraction_service_stores_fields(tmp_path) -> None:
     assert len(llm.image_calls) == 1
     assert llm.image_calls[0][1] == b"fake-image-bytes"
     assert llm.image_calls[0][2] == "image/png"
+
+
+def test_extraction_service_surfaces_llm_error_detail(tmp_path) -> None:
+    storage = SQLiteStorage(str(tmp_path / "test.db"))
+    job = storage.create_job("folder-1")
+    storage.save_job_files(
+        job.job_id,
+        [FileRef(file_id="file-1", name="a", mime_type="image/png", sort_index=1)],
+    )
+    label_schema = json.dumps(
+        {"type": "object", "properties": {"iban_number": {"type": "string"}}}
+    )
+    label = storage.create_label("IBAN", label_schema, "")
+    storage.upsert_file_label_assignment(
+        job.job_id, "file-1", label.label_id, 1.0, MATCHED
+    )
+    llm = ErrorLLM()
+    drive = DummyDrive(payload=b"fake-image-bytes")
+    service = ExtractionService(llm, storage, drive)
+
+    service.extract_fields_for_job(job.job_id)
+
+    extraction = storage.get_extraction(job.job_id, "file-1")
+    assert extraction is not None
+    payload = json.loads(extraction.fields_json or "{}")
+    warnings = payload.get("warnings", [])
+    assert "LLM_IMAGE_EXTRACTION_FAILED" in warnings
+    assert any(
+        warning.startswith("LLM_ERROR_DETAIL: OpenAI responses API error 400")
+        for warning in warnings
+    )

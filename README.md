@@ -98,7 +98,17 @@ Recommended: use the built-in OAuth flow so you do not have to paste access toke
    - If the consent screen is in Testing, add your Google account as a Test user.
 3) Create OAuth credentials (Web application is recommended):
    https://console.cloud.google.com/apis/credentials
-   - Authorized redirect URI: `http://localhost:8080/`
+   - Authorized redirect URI must exactly match app setting `OAUTH_REDIRECT_URI`.
+   - Default: `http://localhost:8080/`
+   - In Cloud Console:
+     - Open **APIs & Services** -> **Credentials**
+     - Click your OAuth 2.0 Client ID
+     - Under **Authorized redirect URIs**, click **Add URI**
+     - Add `http://localhost:8080/`
+     - Click **Save**
+   - Important:
+     - `http://localhost:8080/` (with trailing slash) is different from `http://localhost:8080`
+     - The app request URI and Google Cloud redirect URI must match character-for-character
 
 ### Local .env setup
 Copy the example file and add your values:
@@ -109,6 +119,7 @@ Fill in:
 ```
 OAUTH_CLIENT_ID=...
 OAUTH_CLIENT_SECRET=...
+OAUTH_REDIRECT_URI=http://localhost:8080/  # optional, must match Google OAuth client redirect URI
 FOLDER_ID=...
 GOOGLE_DRIVE_ACCESS_TOKEN=...   # optional fallback
 TEST_SQLITE_PATH=./app.db       # optional override for scripts
@@ -162,7 +173,8 @@ from files you add via **Add as label example** or when creating a new label. Ma
 labels and examples in the **Labels** view inside the Streamlit app.
 
 ### Manual OAuth code flow (no localhost callback)
-If `http://localhost:8080/` is not reachable (for example when running in WSL or a remote VM):
+If your configured `OAUTH_REDIRECT_URI` callback is not reachable
+(for example when running in WSL or a remote VM):
 1) Click **Sign in with Google** to generate the authorization link.
 2) Complete consent and copy the redirect URL (or the `code=` value).
 3) Paste the redirect URL in **Redirect URL** and click **Extract token**.

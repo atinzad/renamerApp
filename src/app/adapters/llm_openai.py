@@ -46,13 +46,14 @@ class OpenAILLMAdapter(LLMPort):
                 signals=["ABSTAIN_NOT_ENOUGH_EVIDENCE"],
             )
         messages = self._build_messages(ocr_text, candidates)
-        payload = self._post_response(
-            messages,
-            response_format={"type": "json_object"},
-            max_tokens=400,
-            model=self._model,
-        )
-        if payload is None:
+        try:
+            payload = self._post_response(
+                messages,
+                response_format={"type": "json_object"},
+                max_tokens=400,
+                model=self._model,
+            )
+        except RuntimeError:
             return LabelFallbackClassification(
                 label_name=None, confidence=0.0, signals=["LLM_REQUEST_FAILED"]
             )
@@ -81,7 +82,12 @@ class OpenAILLMAdapter(LLMPort):
                 ),
             },
         ]
-        return self._run_extraction(messages, json_schema, model=self._model)
+        return self._run_extraction(
+            messages,
+            json_schema,
+            model=self._model,
+            raise_on_empty=False,
+        )
 
     def extract_fields_from_image(
         self,
@@ -117,9 +123,20 @@ class OpenAILLMAdapter(LLMPort):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": content_items},
         ]
-        return self._run_extraction(messages, json_schema, model=self._vision_model)
+        return self._run_extraction(
+            messages,
+            json_schema,
+            model=self._vision_model,
+            raise_on_empty=True,
+        )
 
-    def _run_extraction(self, messages: list[dict], json_schema: dict, model: str) -> dict:
+    def _run_extraction(
+        self,
+        messages: list[dict],
+        json_schema: dict,
+        model: str,
+        raise_on_empty: bool,
+    ) -> dict:
         response = self._post_response(
             messages,
             response_format={
@@ -131,7 +148,8 @@ class OpenAILLMAdapter(LLMPort):
             max_tokens=800,
             model=model,
         )
-        parsed = self._parse_fields_response(response) if response else {}
+        parsed = self._parse_fields_response(response)
+        schema_output = self._extract_output_text(response)
         if not parsed:
             response = self._post_response(
                 messages,
@@ -139,9 +157,20 @@ class OpenAILLMAdapter(LLMPort):
                 max_tokens=800,
                 model=model,
             )
-            if response is None:
-                return {}
             parsed = self._parse_fields_response(response)
+            json_output = self._extract_output_text(response)
+            if not parsed and raise_on_empty:
+                details: list[str] = []
+                schema_summary = self._truncate_error_detail(schema_output)
+                if schema_summary:
+                    details.append(f"schema attempt: {schema_summary}")
+                json_summary = self._truncate_error_detail(json_output)
+                if json_summary:
+                    details.append(f"json attempt: {json_summary}")
+                reason = "; ".join(details) if details else "no model output"
+                raise RuntimeError(
+                    f"LLM extraction returned empty or unparsable output ({reason})."
+                )
         return parsed
 
     def _images_from_file_bytes(self, file_bytes: bytes, mime_type: str) -> list[bytes]:
@@ -294,7 +323,7 @@ class OpenAILLMAdapter(LLMPort):
         response_format: dict,
         max_tokens: int,
         model: str,
-    ) -> dict | None:
+    ) -> dict:
         input_items = self._to_response_input(messages)
         try:
             response = requests.post(
@@ -307,15 +336,24 @@ class OpenAILLMAdapter(LLMPort):
                     "model": model,
                     "input": input_items,
                     "text": {"format": response_format},
-                    "temperature": 0.0,
-                    "max_tokens": max_tokens,
+                    "max_output_tokens": max_tokens,
                 },
                 timeout=30,
             )
-            response.raise_for_status()
-        except requests.RequestException:
-            return None
-        return response.json()
+        except requests.Timeout as exc:
+            raise RuntimeError("OpenAI request timed out.") from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+        if response.status_code >= 400:
+            detail = self._truncate_error_detail(response.text)
+            message = f"OpenAI responses API error {response.status_code}"
+            if detail:
+                message = f"{message}: {detail}"
+            raise RuntimeError(message)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RuntimeError("OpenAI response was not valid JSON.") from exc
 
     def _parse_fields_response(self, payload: dict) -> dict:
         content = self._extract_output_text(payload)
@@ -365,6 +403,15 @@ class OpenAILLMAdapter(LLMPort):
             except json.JSONDecodeError:
                 return None
         return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _truncate_error_detail(value: str | None, max_len: int = 280) -> str:
+        if not value:
+            return ""
+        compact = " ".join(str(value).split())
+        if len(compact) <= max_len:
+            return compact
+        return f"{compact[:max_len]}..."
 
     @staticmethod
     def _to_response_input(messages: list[dict]) -> list[dict]:

@@ -55,8 +55,13 @@ def render_labels_view(
                             label.label_id, schema_value.strip()
                         )
                         st.success("Schema saved.")
+                        st.session_state[refresh_schema_key] = True
+                        _trigger_rerun()
                     except Exception as exc:
                         st.error(f"Save failed: {exc}")
+            _render_field_descriptions(
+                label.label_id, schema_value or "{}", schema_key, services
+            )
             instructions_key = f"instructions_{label.label_id}"
             instructions_value = st.text_area(
                 "Extraction instructions",
@@ -248,3 +253,59 @@ def render_labels_view(
                         _trigger_rerun()
                     except Exception as exc:
                         st.error(f"Failed to delete label: {exc}")
+
+
+def _render_field_descriptions(
+    label_id: str,
+    schema_json: str,
+    schema_key: str,
+    services: dict[str, Any],
+) -> None:
+    try:
+        parsed = json.loads(schema_json) if schema_json.strip() else {}
+    except json.JSONDecodeError:
+        return
+    properties = parsed.get("properties", {}) if isinstance(parsed, dict) else {}
+    if not isinstance(properties, dict) or not properties:
+        return
+    with st.expander("Field Descriptions", expanded=False):
+        st.caption("Add per-field guidance to improve extraction accuracy.")
+        cols = st.columns([2, 1, 4])
+        cols[0].markdown("**Field**")
+        cols[1].markdown("**Type**")
+        cols[2].markdown("**Description**")
+        for field_name, field_schema in properties.items():
+            field_type = field_schema.get("type", "string") if isinstance(field_schema, dict) else "string"
+            current_desc = field_schema.get("description", "") if isinstance(field_schema, dict) else ""
+            cols = st.columns([2, 1, 4])
+            cols[0].code(field_name, language=None)
+            cols[1].text(field_type)
+            desc_input = cols[2].text_input(
+                f"desc_{field_name}",
+                value=current_desc,
+                key=f"field_desc_{label_id}_{field_name}",
+                label_visibility="collapsed",
+            )
+        if st.button("Save descriptions", key=f"save_descs_{label_id}"):
+            try:
+                for field_name in properties:
+                    desc_key = f"field_desc_{label_id}_{field_name}"
+                    new_desc = st.session_state.get(desc_key, "").strip()
+                    if new_desc:
+                        if isinstance(properties[field_name], dict):
+                            properties[field_name]["description"] = new_desc
+                        else:
+                            properties[field_name] = {"type": "string", "description": new_desc}
+                    else:
+                        if isinstance(properties[field_name], dict):
+                            properties[field_name].pop("description", None)
+                updated_json = json.dumps(parsed, indent=2)
+                services["storage"].update_label_extraction_schema(
+                    label_id, updated_json
+                )
+                st.session_state[schema_key] = updated_json
+                st.success("Descriptions saved.")
+                st.session_state[f"refresh_schema_{label_id}"] = True
+                _trigger_rerun()
+            except Exception as exc:
+                st.error(f"Save failed: {exc}")

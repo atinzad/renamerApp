@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.adapters.llm_openai import OpenAILLMAdapter
 from app.domain.label_fallback import LabelFallbackCandidate
 
@@ -116,6 +118,50 @@ def test_openai_adapter_extract_fields_from_image_uses_vision_model(monkeypatch)
     )
 
     assert captured["model"] == "vision-model"
+
+
+def test_openai_adapter_extract_fields_from_image_raises_on_empty_output(
+    monkeypatch,
+) -> None:
+    adapter = _adapter()
+
+    def _fake_post(messages, response_format, max_tokens, model):
+        _ = messages
+        _ = response_format
+        _ = max_tokens
+        _ = model
+        return {"output_text": "no json here"}
+
+    monkeypatch.setattr(adapter, "_post_response", _fake_post)
+    monkeypatch.setattr(adapter, "_images_from_file_bytes", lambda *_args, **_kwargs: [b"a"])
+
+    with pytest.raises(RuntimeError, match="empty or unparsable output"):
+        adapter.extract_fields_from_image(
+            schema={"type": "object", "properties": {"civil_id": {"type": "string"}}},
+            file_bytes=b"img",
+            mime_type="image/png",
+            instructions=None,
+        )
+
+
+def test_openai_adapter_extract_fields_text_keeps_empty_fallback(monkeypatch) -> None:
+    adapter = _adapter()
+
+    def _fake_post(messages, response_format, max_tokens, model):
+        _ = messages
+        _ = response_format
+        _ = max_tokens
+        _ = model
+        return {"output_text": "no json here"}
+
+    monkeypatch.setattr(adapter, "_post_response", _fake_post)
+
+    parsed = adapter.extract_fields(
+        schema={"type": "object", "properties": {"civil_id": {"type": "string"}}},
+        ocr_text="some ocr text",
+        instructions=None,
+    )
+    assert parsed == {}
 
 
 def test_openai_adapter_image_page_cap_is_applied(monkeypatch) -> None:

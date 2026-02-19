@@ -58,11 +58,18 @@ class ExtractionService:
                             )
                             or {}
                         )
-                    except Exception:
+                    except Exception as exc:
                         warnings.append("LLM_IMAGE_EXTRACTION_FAILED")
+                        detail = self._safe_warning_detail(exc)
+                        if detail:
+                            warnings.append(f"LLM_ERROR_DETAIL: {detail}")
                         needs_review = True
                         extracted = {}
-                    if not extracted and schema.get("properties"):
+                    if (
+                        not extracted
+                        and schema.get("properties")
+                        and "LLM_IMAGE_EXTRACTION_FAILED" not in warnings
+                    ):
                         warnings.append("LLM_EXTRACTION_EMPTY")
                         needs_review = True
         fields, missing_warnings, missing_review = apply_missing_field_policy(
@@ -145,6 +152,16 @@ class ExtractionService:
     @staticmethod
     def _default_instructions() -> str:
         return 'Extract fields according to this schema. If a field is missing, return "UNKNOWN".'
+
+    @staticmethod
+    def _safe_warning_detail(exc: Exception, max_len: int = 320) -> str:
+        text = str(exc or "").strip()
+        if not text:
+            return ""
+        compact = " ".join(text.split())
+        if len(compact) <= max_len:
+            return compact
+        return f"{compact[:max_len]}..."
 
     def _ordered_files(self, job_id: str) -> list:
         files = self._storage.get_job_files(job_id)

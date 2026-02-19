@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import re
 import socketserver
 import tempfile
@@ -18,7 +19,10 @@ import requests
 import streamlit as st
 
 _OAUTH_SCOPE = "https://www.googleapis.com/auth/drive"
-_REDIRECT_URI = "http://localhost:8080/"
+_DEFAULT_REDIRECT_URI = "http://localhost:8080/"
+_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", _DEFAULT_REDIRECT_URI).strip()
+if not _REDIRECT_URI:
+    _REDIRECT_URI = _DEFAULT_REDIRECT_URI
 _OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _KEYRING_SERVICE = "renamerapp-google-drive"
 _KEYRING_REFRESH_TOKEN = "refresh_token"
@@ -106,6 +110,7 @@ def _start_oauth_callback_server() -> None:
     global _OAUTH_SERVER_STARTED
     if _OAUTH_SERVER_STARTED:
         return
+    callback_host, callback_port = _oauth_callback_bind_address()
 
     class OAuthHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -135,10 +140,12 @@ def _start_oauth_callback_server() -> None:
     def _serve() -> None:
         global _OAUTH_SERVER_STARTED, _OAUTH_ERROR
         try:
-            with socketserver.TCPServer(("", 8080), OAuthHandler) as httpd:
+            with socketserver.TCPServer((callback_host, callback_port), OAuthHandler) as httpd:
                 httpd.handle_request()
         except OSError as exc:
-            _OAUTH_ERROR = f"OAuth callback server failed to start: {exc}"
+            _OAUTH_ERROR = (
+                f"OAuth callback server failed to start on {callback_host}:{callback_port}: {exc}"
+            )
             _OAUTH_EVENT.set()
         finally:
             _OAUTH_SERVER_STARTED = False
@@ -200,6 +207,15 @@ def _extract_code_from_redirect(value: str) -> str | None:
     parsed = urlparse(value.strip())
     params = parse_qs(parsed.query)
     return params.get("code", [None])[0]
+
+
+def _oauth_callback_bind_address() -> tuple[str, int]:
+    parsed = urlparse(_REDIRECT_URI)
+    host = parsed.hostname or "localhost"
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return host, port
 
 
 def _persist_access_token_to_env(access_token: str) -> None:
@@ -290,6 +306,7 @@ def render_auth_controls(env_values: dict[str, str]) -> AuthInputs:
         st.session_state["manual_access_token"] = env_access_token
 
     st.subheader("Google Login (Recommended)")
+    st.caption(f"OAuth redirect URI: `{_REDIRECT_URI}`")
     client_id = st.text_input(
         "OAuth Client ID",
         value=env_client_id or stored_client_id,

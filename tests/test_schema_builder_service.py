@@ -101,7 +101,8 @@ def test_build_from_ocr_only_include_guidance_is_enforced() -> None:
 
     properties = schema.get("properties", {})
     assert set(properties.keys()) == {"issuer_name", "document_number", "issue_date"}
-    assert properties["issue_date"] == {"type": "string"}
+    assert properties["issue_date"]["type"] == "string"
+    assert "description" in properties["issue_date"]
     assert schema.get("required") == ["issuer_name", "document_number", "issue_date"]
 
 
@@ -167,8 +168,56 @@ def test_build_from_ocr_guidance_boolean_flag_uses_boolean_type() -> None:
     schema, _ = service.build_from_ocr("label-1", "", guidance_override=guidance)
 
     properties = schema.get("properties", {})
-    assert properties["name"] == {"type": "string"}
-    assert properties["signature_present"] == {"type": "boolean"}
+    assert properties["name"]["type"] == "string"
+    assert properties["signature_present"]["type"] == "boolean"
+
+
+def test_guidance_fields_get_known_descriptions() -> None:
+    storage = _RecordingStorage()
+    llm = _RecordingLLM()
+    service = SchemaBuilderService(storage=storage, llm=llm)
+
+    guidance = "Extract civil_number, name, and expiry_date."
+    schema, _ = service.build_from_ocr("label-1", "", guidance_override=guidance)
+
+    properties = schema.get("properties", {})
+    assert properties["civil_number"]["description"] == "Civil ID number as printed on the card"
+    assert properties["name"]["description"] == "Full name as it appears on the document"
+    assert properties["expiry_date"]["description"] == "Expiry/expiration date"
+
+
+def test_sanitize_preserves_description() -> None:
+    from app.services.schema_builder_service import _sanitize_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "civil_number": {"type": "string", "description": "12-digit civil ID"},
+            "name": {"type": "string", "description": "Full name"},
+            "address": {"type": "string"},
+        },
+        "required": ["civil_number", "name", "address"],
+        "additionalProperties": False,
+    }
+    result = _sanitize_schema(schema)
+    assert result["properties"]["civil_number"]["description"] == "12-digit civil ID"
+    assert result["properties"]["name"]["description"] == "Full name"
+    assert "description" not in result["properties"]["address"]
+
+
+def test_sanitize_strips_empty_description() -> None:
+    from app.services.schema_builder_service import _sanitize_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "   "},
+        },
+        "required": ["name"],
+        "additionalProperties": False,
+    }
+    result = _sanitize_schema(schema)
+    assert "description" not in result["properties"]["name"]
 
 
 def test_build_from_ocr_filters_noisy_keys_and_keeps_relevant_fields() -> None:

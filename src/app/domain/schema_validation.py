@@ -19,16 +19,24 @@ def validate_schema_config(schema_json: str, naming_template: str) -> list[str] 
         errors.append("Schema JSON must be an object.")
         return errors
 
-    for key, value in parsed.items():
-        if isinstance(value, (dict, list)):
-            errors.append(f"Schema field '{key}' must be a primitive value, not nested.")
+    is_json_schema = (
+        parsed.get("type") == "object"
+        and isinstance(parsed.get("properties"), dict)
+    )
+    if is_json_schema:
+        field_names = set(parsed["properties"].keys())
+    else:
+        field_names = set(parsed.keys())
+        for key, value in parsed.items():
+            if isinstance(value, (dict, list)):
+                errors.append(f"Schema field '{key}' must be a primitive value, not nested.")
 
     placeholders = _PLACEHOLDER_RE.findall(naming_template or "")
-    if not parsed and placeholders:
+    if not field_names and placeholders:
         errors.append("Naming template has placeholders but schema is empty.")
     else:
         for placeholder in placeholders:
-            if placeholder not in parsed:
+            if placeholder not in field_names:
                 errors.append(f"Naming template placeholder '{placeholder}' missing in schema.")
 
     return None if not errors else errors
