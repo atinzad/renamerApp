@@ -73,6 +73,104 @@ def _extract_folder_id(value: str) -> str:
     return trimmed
 
 
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_ocr_progress(event: dict) -> tuple[str, str, float | None]:
+    stage = str(event.get("stage", "")).strip()
+    file_name = str(event.get("file_name") or event.get("file_id") or "file")
+    index = _to_int(event.get("index"), 0)
+    total = _to_int(event.get("total"), 0)
+    processed = _to_int(event.get("processed"), 0)
+    skipped_cached = _to_int(event.get("skipped_cached"), 0)
+    mode = str(event.get("mode") or "serial")
+    message = "Working..."
+    detail = ""
+    progress: float | None = None
+    stage_fraction = {
+        "download_started": 0.05,
+        "download_done": 0.2,
+        "ocr_started": 0.35,
+        "ocr_done": 0.75,
+        "save_started": 0.9,
+        "save_done": 1.0,
+    }
+
+    if stage == "start":
+        message = f"Starting OCR in {mode} mode for {total} file(s)."
+        detail = f"Cached OCR skipped: {skipped_cached}."
+        progress = 1.0 if total == 0 else 0.0
+    elif stage == "skip_cached":
+        message = f"Skipping cached OCR for {file_name}."
+    elif stage == "download_started":
+        message = f"Downloading file {index}/{total}: {file_name}"
+    elif stage == "download_done":
+        message = f"Download complete for file {index}/{total}: {file_name}"
+    elif stage == "ocr_started":
+        message = f"Running OCR on file {index}/{total}: {file_name}"
+    elif stage == "ocr_done":
+        message = f"OCR complete for file {index}/{total}: {file_name}"
+    elif stage == "save_started":
+        message = f"Saving OCR result for file {index}/{total}: {file_name}"
+    elif stage == "save_done":
+        duration_ms = _to_int(event.get("duration_ms"), 0)
+        message = f"Saved OCR result for file {index}/{total}: {file_name}"
+        detail = (
+            f"Processed {processed}/{total} file(s). Last file took {duration_ms} ms."
+        )
+    elif stage == "ocr_failed":
+        error_text = str(event.get("message") or "OCR failed")
+        message = f"OCR failed for file {index}/{total}: {file_name}"
+        detail = error_text
+    elif stage == "error":
+        message = str(event.get("message") or "OCR failed.")
+    elif stage == "complete":
+        if total == 0:
+            message = "OCR finished. No files required OCR."
+        else:
+            message = f"OCR finished. Processed {processed}/{total} file(s)."
+        detail = f"Cached OCR skipped: {skipped_cached}."
+        progress = 1.0
+
+    if progress is None and total > 0 and index > 0 and stage in stage_fraction:
+        progress = ((index - 1) + stage_fraction[stage]) / total
+    if progress is None and total > 0 and stage in {"save_done", "complete"}:
+        progress = processed / total
+    if progress is not None:
+        progress = max(0.0, min(1.0, progress))
+    return message, detail, progress
+
+
+def _run_ocr_with_progress(
+    services: dict[str, object],
+    job_id: str,
+    file_ids: list[str] | None = None,
+) -> None:
+    status_slot = st.empty()
+    detail_slot = st.empty()
+    progress_bar = st.progress(0.0)
+
+    def _on_progress(event: dict) -> None:
+        message, detail, progress = _format_ocr_progress(event)
+        status_slot.info(message)
+        if detail:
+            detail_slot.caption(detail)
+        else:
+            detail_slot.empty()
+        if progress is not None:
+            progress_bar.progress(progress)
+
+    services["ocr_service"].run_ocr(
+        job_id=job_id,
+        file_ids=file_ids,
+        progress_callback=_on_progress,
+    )
+
+
 def main() -> None:
     st.title("Google Drive Image Renamer")
     _init_state()
@@ -184,7 +282,7 @@ def main() -> None:
                 token = ensure_access_token(access_token, client_id, client_secret)
                 services = _get_services(token, sqlite_path)
                 with st.spinner("Running OCR..."):
-                    services["ocr_service"].run_ocr(job_id)
+                    _run_ocr_with_progress(services, job_id)
                 st.session_state["files"] = services["jobs_service"].list_files(job_id)
                 st.session_state["ocr_refresh_token"] = str(uuid4())
                 st.session_state["ocr_ready"] = True
@@ -728,8 +826,8 @@ def main() -> None:
                                 )
                                 services = _get_services(token, sqlite_path)
                                 with st.spinner("Running OCR..."):
-                                    services["ocr_service"].run_ocr(
-                                        job_id, [file_ref.file_id]
+                                    _run_ocr_with_progress(
+                                        services, job_id, [file_ref.file_id]
                                     )
                                 st.session_state["ocr_refresh_token"] = str(uuid4())
                                 st.success("OCR completed.")

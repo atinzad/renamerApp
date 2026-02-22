@@ -112,3 +112,65 @@ def test_run_ocr_with_empty_file_ids_noops() -> None:
     drive.download_file_bytes.assert_not_called()
     ocr.extract_text.assert_not_called()
     storage.save_ocr_result.assert_not_called()
+
+
+def test_run_ocr_emits_progress_events_for_single_file(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.ocr_service.OCR_WORKERS", 1)
+    job_files = [FileRef(file_id="f1", name="a.jpg", mime_type="image/jpeg")]
+    storage = Mock()
+    storage.get_job_files.return_value = job_files
+    drive = Mock()
+    drive.download_file_bytes.return_value = b"a"
+    ocr = Mock()
+    ocr.extract_text.return_value = OCRResult(text="text-a", confidence=None)
+    events: list[dict] = []
+
+    service = OCRService(drive=drive, ocr=ocr, storage=storage)
+    service.run_ocr("job-1", progress_callback=events.append)
+
+    stages = [event.get("stage") for event in events]
+    assert stages == [
+        "start",
+        "download_started",
+        "download_done",
+        "ocr_started",
+        "ocr_done",
+        "save_started",
+        "save_done",
+        "complete",
+    ]
+    assert events[0]["total"] == 1
+    assert events[-1]["processed"] == 1
+    assert events[-1]["total"] == 1
+
+
+def test_run_ocr_skip_cached_emits_counts(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.ocr_service.OCR_WORKERS", 1)
+    job_files = [
+        FileRef(file_id="cached", name="cached.jpg", mime_type="image/jpeg"),
+        FileRef(file_id="f1", name="a.jpg", mime_type="image/jpeg"),
+    ]
+    storage = Mock()
+    storage.get_job_files.return_value = job_files
+    storage.get_ocr_result.side_effect = [
+        OCRResult(text="already there", confidence=None),
+        None,
+    ]
+    drive = Mock()
+    drive.download_file_bytes.return_value = b"a"
+    ocr = Mock()
+    ocr.extract_text.return_value = OCRResult(text="text-a", confidence=None)
+    events: list[dict] = []
+
+    service = OCRService(drive=drive, ocr=ocr, storage=storage)
+    service.run_ocr("job-1", progress_callback=events.append)
+
+    stages = [event.get("stage") for event in events]
+    assert "skip_cached" in stages
+    assert stages[0] == "skip_cached"
+    assert stages[1] == "start"
+    assert events[1]["total"] == 1
+    assert events[1]["skipped_cached"] == 1
+    assert events[-1]["stage"] == "complete"
+    assert events[-1]["processed"] == 1
+    assert events[-1]["skipped_cached"] == 1
