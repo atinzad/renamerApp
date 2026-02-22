@@ -332,6 +332,11 @@ def main() -> None:
                     token = ensure_access_token(access_token, client_id, client_secret)
                     services = _get_services(token, sqlite_path)
                     results: dict[str, dict] = {}
+                    files_to_classify = list(st.session_state.get("files", []))
+                    total_files = len(files_to_classify)
+                    classify_status_slot = st.empty()
+                    classify_detail_slot = st.empty()
+                    classify_progress = st.progress(1.0 if total_files == 0 else 0.0)
                     try:
                         labels_data, _, _ = _load_labels_from_storage(services["storage"])
                     except Exception:
@@ -341,7 +346,13 @@ def main() -> None:
                     label_id_map = {label.get("label_id"): label.get("name") for label in labels_data}
                     missing_ocr_count = 0
                     tokenless_count = 0
-                    for file_ref in st.session_state.get("files", []):
+                    if total_files == 0:
+                        classify_status_slot.info("No files available for classification.")
+                    for idx, file_ref in enumerate(files_to_classify, start=1):
+                        classify_status_slot.info(
+                            f"Preparing classification for file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption("Loading OCR text from DB...")
                         ocr_result = services["storage"].get_ocr_result(
                             job_id, file_ref.file_id
                         )
@@ -356,9 +367,22 @@ def main() -> None:
                                 "llm_called": False,
                                 "llm_result": None,
                             }
+                            classify_status_slot.info(
+                                f"Skipped file {idx}/{total_files}: {file_ref.name}"
+                            )
+                            classify_detail_slot.caption(
+                                "No OCR text found, so classification was skipped."
+                            )
+                            classify_progress.progress(idx / total_files)
                             continue
                         if not normalize_text_to_tokens(ocr_result.text):
                             tokenless_count += 1
+                        classify_status_slot.info(
+                            f"Classifying file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption(
+                            "Running lexical/embedding matching and LLM fallback if needed..."
+                        )
                         details = services["label_classification_service"].classify_file(
                             job_id, file_ref.file_id
                         )
@@ -373,6 +397,23 @@ def main() -> None:
                             "llm_result": details.get("llm_result"),
                             "candidates": details.get("candidates", []),
                         }
+                        result_label = label_name or "NO_MATCH"
+                        result_status = str(details.get("status", NO_MATCH))
+                        result_method = str(details.get("method") or "n/a")
+                        classify_status_slot.info(
+                            f"Completed file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption(
+                            f"Result: {result_label} | status={result_status} | method={result_method}"
+                        )
+                        classify_progress.progress(idx / total_files)
+                    if total_files:
+                        classify_status_slot.info(
+                            f"Classification finished for {total_files} file(s)."
+                        )
+                        classify_detail_slot.caption(
+                            f"Skipped for missing OCR: {missing_ocr_count}."
+                        )
                     st.session_state["classification_results"] = results
                     current_selections = dict(st.session_state.get("label_selections", {}))
                     for file_id, result in results.items():
@@ -496,7 +537,99 @@ def main() -> None:
                     )
                 except Exception:
                     extraction_done[file_ref.file_id] = False
+        classification_label_by_file: dict[str, str | None] = {}
+        classification_done_by_file: dict[str, bool] = {}
         for file_ref in files:
+            file_id = file_ref.file_id
+            classification_label = current_selections.get(file_id)
+            if not classification_label:
+                classification_label = stored_classification_labels.get(file_id)
+            if not classification_label:
+                result = classification_results.get(file_id)
+                if result and result.get("label"):
+                    classification_label = str(result["label"])
+            classification_label_by_file[file_id] = classification_label
+            classification_done_by_file[file_id] = bool(
+                classification_label
+                or file_id in stored_assignments
+                or file_id in classification_results
+            )
+
+        filter_cols = st.columns(4)
+        ocr_filter = filter_cols[0].selectbox(
+            "OCR filter",
+            ["ALL", "OCR done", "OCR not done"],
+            key="files_filter_ocr_status",
+        )
+        classification_filter = filter_cols[1].selectbox(
+            "Classification filter",
+            ["ALL", "Classification done", "Classification not done"],
+            key="files_filter_classification_status",
+        )
+        label_filter_options = ["ALL"] + sorted(
+            {
+                str(name)
+                for name in (
+                    label_names
+                    + [
+                        label
+                        for label in classification_label_by_file.values()
+                        if isinstance(label, str) and label.strip()
+                    ]
+                )
+                if str(name).strip()
+            }
+        )
+        current_label_filter = st.session_state.get("files_filter_classification_label", "ALL")
+        if current_label_filter not in label_filter_options:
+            st.session_state["files_filter_classification_label"] = "ALL"
+        classification_label_filter = filter_cols[2].selectbox(
+            "Classification label",
+            label_filter_options,
+            key="files_filter_classification_label",
+            disabled=classification_filter != "Classification done",
+        )
+        extraction_filter = filter_cols[3].selectbox(
+            "Extraction filter",
+            ["ALL", "Extraction done", "Extraction not done"],
+            key="files_filter_extraction_status",
+        )
+        if classification_filter != "Classification done":
+            classification_label_filter = "ALL"
+
+        filtered_files: list = []
+        for file_ref in files:
+            file_id = file_ref.file_id
+            has_ocr = bool(ocr_status.get(file_id, {}).get("has_ocr", False))
+            has_classification = bool(classification_done_by_file.get(file_id, False))
+            has_extraction = bool(extraction_done.get(file_id, False))
+            file_label = classification_label_by_file.get(file_id)
+
+            if ocr_filter == "OCR done" and not has_ocr:
+                continue
+            if ocr_filter == "OCR not done" and has_ocr:
+                continue
+            if classification_filter == "Classification done" and not has_classification:
+                continue
+            if classification_filter == "Classification not done" and has_classification:
+                continue
+            if extraction_filter == "Extraction done" and not has_extraction:
+                continue
+            if extraction_filter == "Extraction not done" and has_extraction:
+                continue
+            if (
+                classification_filter == "Classification done"
+                and classification_label_filter != "ALL"
+                and file_label != classification_label_filter
+            ):
+                continue
+            filtered_files.append(file_ref)
+
+        st.caption(f"Showing {len(filtered_files)} of {len(files)} file(s).")
+        if not filtered_files:
+            st.info("No files match the selected filters.")
+
+        for file_ref in filtered_files:
             badges: list[str] = []
             progress: list[str] = []
             status = ocr_status.get(file_ref.file_id)
@@ -507,13 +640,7 @@ def main() -> None:
                     badges.append("NO OCR")
                 if status.get("has_ocr") and not status.get("has_tokens"):
                     badges.append("NO TOKENS")
-            classification_label = current_selections.get(file_ref.file_id)
-            if not classification_label:
-                classification_label = stored_classification_labels.get(file_ref.file_id)
-            if not classification_label:
-                result = classification_results.get(file_ref.file_id)
-                if result and result.get("label"):
-                    classification_label = str(result["label"])
+            classification_label = classification_label_by_file.get(file_ref.file_id)
             if classification_label:
                 progress.append(f"Classification {classification_label}")
             if extraction_done.get(file_ref.file_id):
@@ -521,503 +648,505 @@ def main() -> None:
             status_parts = progress + badges
             badge_text = f" [{' | '.join(status_parts)}]" if status_parts else ""
             expander_key = f"file_expander_{file_ref.file_id}"
-            st.markdown(f"**{file_ref.name}**{badge_text}")
-            st.caption(f"{file_ref.file_id} • {file_ref.mime_type}")
-            expanded = st.toggle(
-                "Show details",
-                value=st.session_state.get(expander_key, False),
-                key=expander_key,
-            )
-            if expanded:
-                timing = file_timings.get(file_ref.file_id, {})
-                timing_text = (
-                    f"OCR: {timing.get('ocr_ms') if timing.get('ocr_ms') is not None else '—'} ms | "
-                    f"Classification: {timing.get('classify_ms') if timing.get('classify_ms') is not None else '—'} ms | "
-                    f"Extraction: {timing.get('extract_ms') if timing.get('extract_ms') is not None else '—'} ms"
+            file_summary = st.container(border=True)
+            with file_summary:
+                st.markdown(f"**{file_ref.name}**{badge_text}")
+                st.caption(f"{file_ref.file_id} • {file_ref.mime_type}")
+                expanded = st.toggle(
+                    "Show details",
+                    value=st.session_state.get(expander_key, False),
+                    key=expander_key,
                 )
-                st.caption(timing_text)
-                selection_key = f"label_select_{file_ref.file_id}"
-                label_options = ["(Clear)"] + label_names
-                current_label = current_selections.get(file_ref.file_id)
-                selected_index = (
-                    label_options.index(current_label) if current_label in label_options else 0
-                )
-                choice = st.selectbox(
-                    "Classify",
-                    label_options,
-                    index=selected_index,
-                    key=selection_key,
-                )
-                selected_label = None if choice == "(Clear)" else choice
-                previous_label = current_selections.get(file_ref.file_id)
-                current_selections[file_ref.file_id] = selected_label
-                if job_id and selected_label != previous_label:
-                    try:
-                        token = ensure_access_token(access_token, client_id, client_secret)
-                        services = _get_services(token, sqlite_path)
-                        label_id = label_id_map.get(selected_label) if selected_label else None
-                        services["label_classification_service"].override_file_label(
-                            job_id, file_ref.file_id, label_id
-                        )
-                    except Exception as exc:
-                        st.error(f"Override update failed: {exc}")
-                if selected_label and job_id:
-                    if st.button(
-                        "Add as label example",
-                        key=f"add_example_{file_ref.file_id}",
-                    ):
+                if expanded:
+                    timing = file_timings.get(file_ref.file_id, {})
+                    timing_text = (
+                        f"OCR: {timing.get('ocr_ms') if timing.get('ocr_ms') is not None else '—'} ms | "
+                        f"Classification: {timing.get('classify_ms') if timing.get('classify_ms') is not None else '—'} ms | "
+                        f"Extraction: {timing.get('extract_ms') if timing.get('extract_ms') is not None else '—'} ms"
+                    )
+                    st.caption(timing_text)
+                    selection_key = f"label_select_{file_ref.file_id}"
+                    label_options = ["(Clear)"] + label_names
+                    current_label = current_selections.get(file_ref.file_id)
+                    selected_index = (
+                        label_options.index(current_label) if current_label in label_options else 0
+                    )
+                    choice = st.selectbox(
+                        "Classify",
+                        label_options,
+                        index=selected_index,
+                        key=selection_key,
+                    )
+                    selected_label = None if choice == "(Clear)" else choice
+                    previous_label = current_selections.get(file_ref.file_id)
+                    current_selections[file_ref.file_id] = selected_label
+                    if job_id and selected_label != previous_label:
                         try:
                             token = ensure_access_token(access_token, client_id, client_secret)
                             services = _get_services(token, sqlite_path)
-                            ocr_result = services["storage"].get_ocr_result(
-                                job_id, file_ref.file_id
+                            label_id = label_id_map.get(selected_label) if selected_label else None
+                            services["label_classification_service"].override_file_label(
+                                job_id, file_ref.file_id, label_id
                             )
-                            if ocr_result is None or not ocr_result.text.strip():
-                                st.error("Run OCR first to capture this example.")
-                            else:
-                                label_id = label_id_map.get(selected_label)
-                                if not label_id:
-                                    st.error("Label not found.")
-                                else:
-                                    examples = services["storage"].list_label_examples(label_id)
-                                    if any(
-                                        example.file_id == file_ref.file_id
-                                        for example in examples
-                                    ):
-                                        st.info("This file is already an example for the label.")
-                                    else:
-                                        services["label_service"].attach_example(
-                                            label_id, file_ref.file_id
-                                        )
-                                        services["label_service"].process_examples(
-                                            label_id, job_id=job_id
-                                        )
-                                        st.success("Example added to label.")
-                                        _trigger_rerun()
                         except Exception as exc:
-                            st.error(f"Add example failed: {exc}")
-
-                with st.expander("Create new label", expanded=False):
-                    new_label_key = f"new_label_{file_ref.file_id}"
-                    clear_key = f"clear_label_{file_ref.file_id}"
-                    if st.session_state.get(clear_key):
-                        st.session_state[new_label_key] = ""
-                        st.session_state[clear_key] = False
-                    new_label = st.text_input(
-                        "Label name",
-                        value=st.session_state.get(new_label_key, ""),
-                        key=new_label_key,
-                    )
-                    if st.button("Create Label", key=f"create_label_{file_ref.file_id}"):
-                        if not new_label.strip():
-                            st.error("Label name is required.")
-                        elif not job_id:
-                            st.error("List files and run OCR before creating labels.")
-                        else:
+                            st.error(f"Override update failed: {exc}")
+                    if selected_label and job_id:
+                        if st.button(
+                            "Add as label example",
+                            key=f"add_example_{file_ref.file_id}",
+                        ):
                             try:
-                                token = ensure_access_token(
-                                    access_token, client_id, client_secret
-                                )
+                                token = ensure_access_token(access_token, client_id, client_secret)
                                 services = _get_services(token, sqlite_path)
                                 ocr_result = services["storage"].get_ocr_result(
                                     job_id, file_ref.file_id
                                 )
                                 if ocr_result is None or not ocr_result.text.strip():
-                                    st.error("Run OCR first to capture label examples.")
+                                    st.error("Run OCR first to capture this example.")
                                 else:
-                                    label = services["label_service"].create_label(
-                                        new_label.strip(), "{}", ""
-                                    )
-                                    default_llm = (
-                                        f"Identify {new_label.strip()}, "
-                                        "look for data that indicates this document type."
-                                    )
-                                    services["storage"].update_label_llm(
-                                        label.label_id, default_llm
-                                    )
-                                    services["label_service"].attach_example(
-                                        label.label_id, file_ref.file_id
-                                    )
-                                    services["label_service"].process_examples(
-                                        label.label_id, job_id=job_id
-                                    )
-                                    labels_data, label_id_map, using_json_fallback = (
-                                        _load_labels_from_storage(services["storage"])
-                                    )
-                                    label_names = [
-                                        label.get("name")
-                                        for label in labels_data
-                                        if label.get("name")
-                                    ]
-                                    current_selections[file_ref.file_id] = new_label.strip()
-                                    st.session_state[clear_key] = True
-                                    st.success("Label created.")
-                                    _trigger_rerun()
+                                    label_id = label_id_map.get(selected_label)
+                                    if not label_id:
+                                        st.error("Label not found.")
+                                    else:
+                                        examples = services["storage"].list_label_examples(label_id)
+                                        if any(
+                                            example.file_id == file_ref.file_id
+                                            for example in examples
+                                        ):
+                                            st.info("This file is already an example for the label.")
+                                        else:
+                                            services["label_service"].attach_example(
+                                                label_id, file_ref.file_id
+                                            )
+                                            services["label_service"].process_examples(
+                                                label_id, job_id=job_id
+                                            )
+                                            st.success("Example added to label.")
+                                            _trigger_rerun()
                             except Exception as exc:
-                                st.error(f"Create label failed: {exc}")
-
-                result = classification_results.get(file_ref.file_id)
-                if result:
-                    score_pct = f"{result['score'] * 100:.1f}%"
-                    status = result["status"]
-                    candidates = result.get("candidates") or []
-                    best_candidate_name = None
-                    if candidates:
-                        best_candidate_id, _ = candidates[0]
-                        best_candidate_name = label_name_by_id.get(
-                            best_candidate_id, best_candidate_id
+                                st.error(f"Add example failed: {exc}")
+    
+                    with st.expander("Create new label", expanded=False):
+                        new_label_key = f"new_label_{file_ref.file_id}"
+                        clear_key = f"clear_label_{file_ref.file_id}"
+                        if st.session_state.get(clear_key):
+                            st.session_state[new_label_key] = ""
+                            st.session_state[clear_key] = False
+                        new_label = st.text_input(
+                            "Label name",
+                            value=st.session_state.get(new_label_key, ""),
+                            key=new_label_key,
                         )
-                    label_name = result["label"] or best_candidate_name or "—"
-                    suffix = "" if result["label"] else " (best candidate)"
-                    st.write(f"Rule-based classification: {label_name} ({score_pct}){suffix}")
-                    method = result.get("method") or "unknown"
-                    threshold = result.get("threshold")
-                    if threshold is not None:
-                        threshold_pct = f"{threshold * 100:.1f}%"
-                        below = "below threshold" if result["score"] < threshold else "meets threshold"
-                        st.caption(
-                            f"Similarity: {score_pct} via {method} (threshold {threshold_pct}, {below})"
-                        )
-                    else:
-                        st.caption(f"Similarity: {score_pct} via {method}")
-                    st.caption(f"Status: {status}")
-                    if candidates:
-                        rows = []
-                        for candidate_id, candidate_score in candidates:
-                            candidate_name = label_name_by_id.get(candidate_id, candidate_id)
-                            rows.append(
-                                {
-                                    "Label": candidate_name,
-                                    "Score": f"{candidate_score * 100:.1f}%",
-                                }
-                            )
-                        with st.expander("All candidate scores", expanded=False):
-                            st.table(rows)
-                elif file_ref.file_id in stored_assignments:
-                    assignment = stored_assignments[file_ref.file_id]
-                    assignment_label = None
-                    assignment_label_id = getattr(assignment, "label_id", None)
-                    if assignment_label_id:
-                        assignment_label = label_name_by_id.get(
-                            assignment_label_id, assignment_label_id
-                        )
-                    score = float(getattr(assignment, "score", 0.0) or 0.0)
-                    status = str(getattr(assignment, "status", NO_MATCH))
-                    label_text = assignment_label or "—"
-                    st.write(f"Stored classification: {label_text} ({score * 100:.1f}%)")
-                    st.caption(f"Status: {status}")
-
-                llm_signals: list[str] = []
-                llm_override = llm_overrides.get(file_ref.file_id)
-                if llm_override:
-                    st.write(f"LLM suggestion: {llm_override} (OVERRIDDEN)")
-                else:
-                    llm_result: LLMLabelClassification | None = llm_classifications.get(
-                        file_ref.file_id
-                    )
-                    llm_called = result.get("llm_called") if result else False
-                    if llm_result is None:
-                        if llm_called:
-                            st.write("LLM suggestion: — (no result)")
-                        else:
-                            st.write("LLM suggestion: — (not invoked)")
-                    else:
-                        llm_label = llm_result.label_name
-                        llm_confidence = llm_result.confidence
-                        llm_signals = [str(signal) for signal in llm_result.signals]
-                        if llm_label:
-                            llm_score_pct = f"{llm_confidence * 100:.1f}%"
-                            st.write(f"LLM suggestion: {llm_label} ({llm_score_pct})")
-                        else:
-                            st.write("LLM suggestion: Abstained")
-                if llm_signals:
-                    with st.expander("LLM signals", expanded=False):
-                        st.write(", ".join(llm_signals))
-
-                if fallback_candidate_names and job_id:
-                    llm_override_key = f"llm_override_{file_ref.file_id}"
-                    override_options = ["(no override)"] + fallback_candidate_names
-                    current_override = llm_overrides.get(file_ref.file_id)
-                    override_index = (
-                        override_options.index(current_override)
-                        if current_override in override_options
-                        else 0
-                    )
-                    override_choice = st.selectbox(
-                        "LLM fallback override",
-                        override_options,
-                        index=override_index,
-                        key=llm_override_key,
-                    )
-                    new_override = (
-                        None if override_choice == "(no override)" else override_choice
-                    )
-                    if new_override != current_override:
-                        try:
-                            token = ensure_access_token(access_token, client_id, client_secret)
-                            services = _get_services(token, sqlite_path)
-                            if new_override:
-                                updated_at = datetime.now(timezone.utc).isoformat()
-                                services["storage"].set_llm_label_override(
-                                    job_id,
-                                    file_ref.file_id,
-                                    new_override,
-                                    updated_at,
-                                )
-                                llm_overrides[file_ref.file_id] = new_override
+                        if st.button("Create Label", key=f"create_label_{file_ref.file_id}"):
+                            if not new_label.strip():
+                                st.error("Label name is required.")
+                            elif not job_id:
+                                st.error("List files and run OCR before creating labels.")
                             else:
-                                services["storage"].clear_llm_label_override(
-                                    job_id, file_ref.file_id
-                                )
-                                llm_overrides.pop(file_ref.file_id, None)
-                            _trigger_rerun()
-                        except Exception as exc:
-                            st.error(f"LLM override update failed: {exc}")
-
-                if job_id:
-                    with st.expander("Extracted fields", expanded=False):
-                        try:
-                            token = ensure_access_token(access_token, client_id, client_secret)
-                            services = _get_services(token, sqlite_path)
-                            extraction = services["storage"].get_extraction(
-                                job_id, file_ref.file_id
-                            )
-                        except Exception as exc:
-                            st.error(f"Extraction lookup failed: {exc}")
-                            extraction = None
-                        if not extraction:
-                            st.info("<<<PENDING_EXTRACTION>>>")
-                        else:
-                            parsed = _parse_extraction_payload(extraction)
-                            fields = parsed.get("fields", {})
-                            if fields:
-                                rows = [
-                                    {"Field": key, "Value": fields[key]}
-                                    for key in sorted(fields.keys())
-                                ]
-                                st.table(rows)
-                            else:
-                                st.info("No fields extracted.")
-                            if parsed.get("needs_review"):
-                                st.warning("Needs review.")
-                            warnings = parsed.get("warnings", [])
-                            if warnings:
-                                st.caption("Warnings")
-                                st.write(", ".join(warnings))
-                            confidences = parsed.get("confidences", {})
-                            if confidences:
-                                with st.expander("Confidences", expanded=False):
-                                    rows = [
-                                        {"Field": key, "Confidence": confidences[key]}
-                                        for key in sorted(confidences.keys())
-                                    ]
-                                    st.table(rows)
-
-                if job_id:
-                    with st.container():
-                        col_ocr, col_classify, col_extract = st.columns(3)
-                        if col_ocr.button(
-                            "Run OCR",
-                            key=f"run_ocr_{file_ref.file_id}",
-                        ):
-                            try:
-                                token = ensure_access_token(
-                                    access_token, client_id, client_secret
-                                )
-                                services = _get_services(token, sqlite_path)
-                                with st.spinner("Running OCR..."):
-                                    _run_ocr_with_progress(
-                                        services, job_id, [file_ref.file_id]
+                                try:
+                                    token = ensure_access_token(
+                                        access_token, client_id, client_secret
                                     )
-                                st.session_state["ocr_refresh_token"] = str(uuid4())
-                                st.success("OCR completed.")
-                                _trigger_rerun()
-                            except Exception as exc:
-                                st.error(f"OCR failed: {exc}")
-                        if col_classify.button(
-                            "Classify file",
-                            key=f"classify_file_{file_ref.file_id}",
-                        ):
-                            try:
-                                token = ensure_access_token(
-                                    access_token, client_id, client_secret
-                                )
-                                services = _get_services(token, sqlite_path)
-                                details = services["label_classification_service"].classify_file(
-                                    job_id, file_ref.file_id
-                                )
-                                label_id = details.get("label_id")
-                                status = details.get("status", NO_MATCH)
-                                score = float(details.get("score", 0.0))
-                                label_name = label_name_by_id.get(label_id)
-                                classification_results[file_ref.file_id] = {
-                                    "label": label_name,
-                                    "score": score,
-                                    "status": status,
-                                    "method": details.get("method"),
-                                    "threshold": details.get("threshold"),
-                                    "llm_called": details.get("llm_called", False),
-                                    "llm_result": details.get("llm_result"),
-                                    "candidates": details.get("candidates", []),
-                                }
-                                st.session_state["classification_results"] = (
-                                    classification_results
-                                )
-                                if status == MATCHED and label_name:
-                                    current_selections[file_ref.file_id] = label_name
-                                    suggestions = _build_suggested_names(
-                                        files, current_selections
-                                    )
-                                    rename_key = f"edit_{file_ref.file_id}"
-                                    st.session_state[rename_key] = suggestions.get(
-                                        file_ref.file_id, ""
-                                    )
-                                else:
-                                    current_selections[file_ref.file_id] = None
-                                st.success("Classification completed.")
-                                _trigger_rerun()
-                            except Exception as exc:
-                                st.error(f"Classification failed: {exc}")
-                        col_classify.caption("Uses OCR text.")
-                        if col_extract.button(
-                            "Extract fields",
-                            key=f"extract_file_{file_ref.file_id}",
-                        ):
-                            try:
-                                token = ensure_access_token(
-                                    access_token, client_id, client_secret
-                                )
-                                services = _get_services(token, sqlite_path)
-                                with st.spinner("Extracting fields..."):
-                                    services["extraction_service"].extract_fields_for_file(
+                                    services = _get_services(token, sqlite_path)
+                                    ocr_result = services["storage"].get_ocr_result(
                                         job_id, file_ref.file_id
                                     )
-                                st.success("Extraction completed.")
+                                    if ocr_result is None or not ocr_result.text.strip():
+                                        st.error("Run OCR first to capture label examples.")
+                                    else:
+                                        label = services["label_service"].create_label(
+                                            new_label.strip(), "{}", ""
+                                        )
+                                        default_llm = (
+                                            f"Identify {new_label.strip()}, "
+                                            "look for data that indicates this document type."
+                                        )
+                                        services["storage"].update_label_llm(
+                                            label.label_id, default_llm
+                                        )
+                                        services["label_service"].attach_example(
+                                            label.label_id, file_ref.file_id
+                                        )
+                                        services["label_service"].process_examples(
+                                            label.label_id, job_id=job_id
+                                        )
+                                        labels_data, label_id_map, using_json_fallback = (
+                                            _load_labels_from_storage(services["storage"])
+                                        )
+                                        label_names = [
+                                            label.get("name")
+                                            for label in labels_data
+                                            if label.get("name")
+                                        ]
+                                        current_selections[file_ref.file_id] = new_label.strip()
+                                        st.session_state[clear_key] = True
+                                        st.success("Label created.")
+                                        _trigger_rerun()
+                                except Exception as exc:
+                                    st.error(f"Create label failed: {exc}")
+    
+                    result = classification_results.get(file_ref.file_id)
+                    if result:
+                        score_pct = f"{result['score'] * 100:.1f}%"
+                        status = result["status"]
+                        candidates = result.get("candidates") or []
+                        best_candidate_name = None
+                        if candidates:
+                            best_candidate_id, _ = candidates[0]
+                            best_candidate_name = label_name_by_id.get(
+                                best_candidate_id, best_candidate_id
+                            )
+                        label_name = result["label"] or best_candidate_name or "—"
+                        suffix = "" if result["label"] else " (best candidate)"
+                        st.write(f"Rule-based classification: {label_name} ({score_pct}){suffix}")
+                        method = result.get("method") or "unknown"
+                        threshold = result.get("threshold")
+                        if threshold is not None:
+                            threshold_pct = f"{threshold * 100:.1f}%"
+                            below = "below threshold" if result["score"] < threshold else "meets threshold"
+                            st.caption(
+                                f"Similarity: {score_pct} via {method} (threshold {threshold_pct}, {below})"
+                            )
+                        else:
+                            st.caption(f"Similarity: {score_pct} via {method}")
+                        st.caption(f"Status: {status}")
+                        if candidates:
+                            rows = []
+                            for candidate_id, candidate_score in candidates:
+                                candidate_name = label_name_by_id.get(candidate_id, candidate_id)
+                                rows.append(
+                                    {
+                                        "Label": candidate_name,
+                                        "Score": f"{candidate_score * 100:.1f}%",
+                                    }
+                                )
+                            with st.expander("All candidate scores", expanded=False):
+                                st.table(rows)
+                    elif file_ref.file_id in stored_assignments:
+                        assignment = stored_assignments[file_ref.file_id]
+                        assignment_label = None
+                        assignment_label_id = getattr(assignment, "label_id", None)
+                        if assignment_label_id:
+                            assignment_label = label_name_by_id.get(
+                                assignment_label_id, assignment_label_id
+                            )
+                        score = float(getattr(assignment, "score", 0.0) or 0.0)
+                        status = str(getattr(assignment, "status", NO_MATCH))
+                        label_text = assignment_label or "—"
+                        st.write(f"Stored classification: {label_text} ({score * 100:.1f}%)")
+                        st.caption(f"Status: {status}")
+    
+                    llm_signals: list[str] = []
+                    llm_override = llm_overrides.get(file_ref.file_id)
+                    if llm_override:
+                        st.write(f"LLM suggestion: {llm_override} (OVERRIDDEN)")
+                    else:
+                        llm_result: LLMLabelClassification | None = llm_classifications.get(
+                            file_ref.file_id
+                        )
+                        llm_called = result.get("llm_called") if result else False
+                        if llm_result is None:
+                            if llm_called:
+                                st.write("LLM suggestion: — (no result)")
+                            else:
+                                st.write("LLM suggestion: — (not invoked)")
+                        else:
+                            llm_label = llm_result.label_name
+                            llm_confidence = llm_result.confidence
+                            llm_signals = [str(signal) for signal in llm_result.signals]
+                            if llm_label:
+                                llm_score_pct = f"{llm_confidence * 100:.1f}%"
+                                st.write(f"LLM suggestion: {llm_label} ({llm_score_pct})")
+                            else:
+                                st.write("LLM suggestion: Abstained")
+                    if llm_signals:
+                        with st.expander("LLM signals", expanded=False):
+                            st.write(", ".join(llm_signals))
+    
+                    if fallback_candidate_names and job_id:
+                        llm_override_key = f"llm_override_{file_ref.file_id}"
+                        override_options = ["(no override)"] + fallback_candidate_names
+                        current_override = llm_overrides.get(file_ref.file_id)
+                        override_index = (
+                            override_options.index(current_override)
+                            if current_override in override_options
+                            else 0
+                        )
+                        override_choice = st.selectbox(
+                            "LLM fallback override",
+                            override_options,
+                            index=override_index,
+                            key=llm_override_key,
+                        )
+                        new_override = (
+                            None if override_choice == "(no override)" else override_choice
+                        )
+                        if new_override != current_override:
+                            try:
+                                token = ensure_access_token(access_token, client_id, client_secret)
+                                services = _get_services(token, sqlite_path)
+                                if new_override:
+                                    updated_at = datetime.now(timezone.utc).isoformat()
+                                    services["storage"].set_llm_label_override(
+                                        job_id,
+                                        file_ref.file_id,
+                                        new_override,
+                                        updated_at,
+                                    )
+                                    llm_overrides[file_ref.file_id] = new_override
+                                else:
+                                    services["storage"].clear_llm_label_override(
+                                        job_id, file_ref.file_id
+                                    )
+                                    llm_overrides.pop(file_ref.file_id, None)
                                 _trigger_rerun()
                             except Exception as exc:
-                                st.error(f"Extraction failed: {exc}")
-                        col_extract.caption("Uses source image/PDF, not OCR text.")
-
-                suggestions = _build_suggested_names(files, current_selections)
-                suggested_name = suggestions.get(file_ref.file_id, "")
-                effective_label = current_selections.get(file_ref.file_id)
-                rename_key = f"edit_{file_ref.file_id}"
-                if effective_label and (
-                    previous_label != effective_label or not st.session_state.get(rename_key)
-                ):
-                    st.session_state[rename_key] = suggested_name
-                new_name = st.text_input(
-                    "Rename file",
-                    value=st.session_state.get(rename_key, ""),
-                    key=rename_key,
-                )
-                if new_name.strip():
-                    edits[file_ref.file_id] = new_name
-                if st.button(
-                    "Apply rename for this file",
-                    key=f"apply_rename_{file_ref.file_id}",
-                ):
-                    if not job_id:
-                        st.error("No job is active.")
-                    elif not new_name.strip():
-                        st.error("Enter a new filename first.")
-                    else:
-                        try:
-                            token = ensure_access_token(
-                                access_token, client_id, client_secret
-                            )
-                            services = _get_services(token, sqlite_path)
-                            ops = services["rename_service"].preview_manual_rename(
-                                job_id, {file_ref.file_id: new_name}
-                            )
-                            if not ops:
-                                st.info("No rename operation generated.")
+                                st.error(f"LLM override update failed: {exc}")
+    
+                    if job_id:
+                        with st.expander("Extracted fields", expanded=False):
+                            try:
+                                token = ensure_access_token(access_token, client_id, client_secret)
+                                services = _get_services(token, sqlite_path)
+                                extraction = services["storage"].get_extraction(
+                                    job_id, file_ref.file_id
+                                )
+                            except Exception as exc:
+                                st.error(f"Extraction lookup failed: {exc}")
+                                extraction = None
+                            if not extraction:
+                                st.info("<<<PENDING_EXTRACTION>>>")
                             else:
-                                services["rename_service"].apply_rename(job_id, ops)
-                                st.session_state["files"] = services[
-                                    "jobs_service"
-                                ].list_files(job_id)
-                                st.success("Rename applied.")
-                                _trigger_rerun()
-                        except Exception as exc:
-                            st.error(f"Rename failed: {exc}")
-
-                if job_id:
-                    with st.expander("View OCR", expanded=False):
-                        try:
-                            token = ensure_access_token(access_token, client_id, client_secret)
-                            services = _get_services(token, sqlite_path)
-                            ocr_result = services["storage"].get_ocr_result(
-                                job_id, file_ref.file_id
-                            )
-                            ocr_text = ocr_result.text if ocr_result else ""
-                            if not ocr_text.strip():
-                                st.info("No OCR yet.")
-                            refresh_token = st.session_state.get("ocr_refresh_token", "init")
-                            area_key = f"ocr_{job_id}_{file_ref.file_id}_{refresh_token}"
-                            st.session_state[area_key] = ocr_text
-                            st.text_area(
-                                "OCR Text",
-                                value=st.session_state[area_key],
-                                height=200,
-                                key=area_key,
-                                disabled=True,
-                            )
-                        except Exception as exc:
-                            st.error(f"OCR lookup failed: {exc}")
-
-                if job_id:
-                    with st.expander("Preview file", expanded=False):
-                        preview_key = f"preview_toggle_{file_ref.file_id}"
-                        load_preview = st.toggle(
-                            "Load preview",
-                            value=False,
-                            key=preview_key,
-                        )
-                        if load_preview:
+                                parsed = _parse_extraction_payload(extraction)
+                                fields = parsed.get("fields", {})
+                                if fields:
+                                    rows = [
+                                        {"Field": key, "Value": fields[key]}
+                                        for key in sorted(fields.keys())
+                                    ]
+                                    st.table(rows)
+                                else:
+                                    st.info("No fields extracted.")
+                                if parsed.get("needs_review"):
+                                    st.warning("Needs review.")
+                                warnings = parsed.get("warnings", [])
+                                if warnings:
+                                    st.caption("Warnings")
+                                    st.write(", ".join(warnings))
+                                confidences = parsed.get("confidences", {})
+                                if confidences:
+                                    with st.expander("Confidences", expanded=False):
+                                        rows = [
+                                            {"Field": key, "Confidence": confidences[key]}
+                                            for key in sorted(confidences.keys())
+                                        ]
+                                        st.table(rows)
+    
+                    if job_id:
+                        with st.container():
+                            col_ocr, col_classify, col_extract = st.columns(3)
+                            if col_ocr.button(
+                                "Run OCR",
+                                key=f"run_ocr_{file_ref.file_id}",
+                            ):
+                                try:
+                                    token = ensure_access_token(
+                                        access_token, client_id, client_secret
+                                    )
+                                    services = _get_services(token, sqlite_path)
+                                    with st.spinner("Running OCR..."):
+                                        _run_ocr_with_progress(
+                                            services, job_id, [file_ref.file_id]
+                                        )
+                                    st.session_state["ocr_refresh_token"] = str(uuid4())
+                                    st.success("OCR completed.")
+                                    _trigger_rerun()
+                                except Exception as exc:
+                                    st.error(f"OCR failed: {exc}")
+                            if col_classify.button(
+                                "Classify file",
+                                key=f"classify_file_{file_ref.file_id}",
+                            ):
+                                try:
+                                    token = ensure_access_token(
+                                        access_token, client_id, client_secret
+                                    )
+                                    services = _get_services(token, sqlite_path)
+                                    details = services["label_classification_service"].classify_file(
+                                        job_id, file_ref.file_id
+                                    )
+                                    label_id = details.get("label_id")
+                                    status = details.get("status", NO_MATCH)
+                                    score = float(details.get("score", 0.0))
+                                    label_name = label_name_by_id.get(label_id)
+                                    classification_results[file_ref.file_id] = {
+                                        "label": label_name,
+                                        "score": score,
+                                        "status": status,
+                                        "method": details.get("method"),
+                                        "threshold": details.get("threshold"),
+                                        "llm_called": details.get("llm_called", False),
+                                        "llm_result": details.get("llm_result"),
+                                        "candidates": details.get("candidates", []),
+                                    }
+                                    st.session_state["classification_results"] = (
+                                        classification_results
+                                    )
+                                    if status == MATCHED and label_name:
+                                        current_selections[file_ref.file_id] = label_name
+                                        suggestions = _build_suggested_names(
+                                            files, current_selections
+                                        )
+                                        rename_key = f"edit_{file_ref.file_id}"
+                                        st.session_state[rename_key] = suggestions.get(
+                                            file_ref.file_id, ""
+                                        )
+                                    else:
+                                        current_selections[file_ref.file_id] = None
+                                    st.success("Classification completed.")
+                                    _trigger_rerun()
+                                except Exception as exc:
+                                    st.error(f"Classification failed: {exc}")
+                            col_classify.caption("Uses OCR text.")
+                            if col_extract.button(
+                                "Extract fields",
+                                key=f"extract_file_{file_ref.file_id}",
+                            ):
+                                try:
+                                    token = ensure_access_token(
+                                        access_token, client_id, client_secret
+                                    )
+                                    services = _get_services(token, sqlite_path)
+                                    with st.spinner("Extracting fields..."):
+                                        services["extraction_service"].extract_fields_for_file(
+                                            job_id, file_ref.file_id
+                                        )
+                                    st.success("Extraction completed.")
+                                    _trigger_rerun()
+                                except Exception as exc:
+                                    st.error(f"Extraction failed: {exc}")
+                            col_extract.caption("Uses source image/PDF, not OCR text.")
+    
+                    suggestions = _build_suggested_names(files, current_selections)
+                    suggested_name = suggestions.get(file_ref.file_id, "")
+                    effective_label = current_selections.get(file_ref.file_id)
+                    rename_key = f"edit_{file_ref.file_id}"
+                    if effective_label and (
+                        previous_label != effective_label or not st.session_state.get(rename_key)
+                    ):
+                        st.session_state[rename_key] = suggested_name
+                    new_name = st.text_input(
+                        "Rename file",
+                        value=st.session_state.get(rename_key, ""),
+                        key=rename_key,
+                    )
+                    if new_name.strip():
+                        edits[file_ref.file_id] = new_name
+                    if st.button(
+                        "Apply rename for this file",
+                        key=f"apply_rename_{file_ref.file_id}",
+                    ):
+                        if not job_id:
+                            st.error("No job is active.")
+                        elif not new_name.strip():
+                            st.error("Enter a new filename first.")
+                        else:
                             try:
                                 token = ensure_access_token(
                                     access_token, client_id, client_secret
                                 )
                                 services = _get_services(token, sqlite_path)
-                                file_bytes = services["drive"].download_file_bytes(
-                                    file_ref.file_id
+                                ops = services["rename_service"].preview_manual_rename(
+                                    job_id, {file_ref.file_id: new_name}
                                 )
-                                if len(file_bytes) > _PREVIEW_MAX_BYTES:
-                                    st.info("Preview skipped (file too large).")
-                                elif file_ref.mime_type.startswith("image/"):
-                                    st.image(file_bytes, width="stretch")
-                                elif file_ref.mime_type == "application/pdf":
-                                    rendered = False
-                                    if hasattr(st, "pdf"):
-                                        try:
-                                            st.pdf(file_bytes)
-                                            rendered = True
-                                        except Exception:
-                                            rendered = False
-                                    if not rendered:
-                                        encoded = base64.b64encode(file_bytes).decode(
-                                            "ascii"
-                                        )
-                                        html = (
-                                            f'<object data="data:application/pdf;base64,{encoded}" '
-                                            'type="application/pdf" width="100%" height="600">'
-                                            "PDF preview unavailable. Use download below."
-                                            "</object>"
-                                        )
-                                        components.html(html, height=620)
-                                    st.download_button(
-                                        "Download PDF",
-                                        data=file_bytes,
-                                        file_name=file_ref.name,
-                                        mime="application/pdf",
-                                    )
+                                if not ops:
+                                    st.info("No rename operation generated.")
                                 else:
-                                    st.info("Preview not available for this file type.")
+                                    services["rename_service"].apply_rename(job_id, ops)
+                                    st.session_state["files"] = services[
+                                        "jobs_service"
+                                    ].list_files(job_id)
+                                    st.success("Rename applied.")
+                                    _trigger_rerun()
                             except Exception as exc:
-                                st.error(f"Preview failed: {exc}")
-                        else:
-                            st.caption("Preview loads on demand to keep the UI responsive.")
+                                st.error(f"Rename failed: {exc}")
+    
+                    if job_id:
+                        with st.expander("View OCR", expanded=False):
+                            try:
+                                token = ensure_access_token(access_token, client_id, client_secret)
+                                services = _get_services(token, sqlite_path)
+                                ocr_result = services["storage"].get_ocr_result(
+                                    job_id, file_ref.file_id
+                                )
+                                ocr_text = ocr_result.text if ocr_result else ""
+                                if not ocr_text.strip():
+                                    st.info("No OCR yet.")
+                                refresh_token = st.session_state.get("ocr_refresh_token", "init")
+                                area_key = f"ocr_{job_id}_{file_ref.file_id}_{refresh_token}"
+                                st.session_state[area_key] = ocr_text
+                                st.text_area(
+                                    "OCR Text",
+                                    value=st.session_state[area_key],
+                                    height=200,
+                                    key=area_key,
+                                    disabled=True,
+                                )
+                            except Exception as exc:
+                                st.error(f"OCR lookup failed: {exc}")
+    
+                    if job_id:
+                        with st.expander("Preview file", expanded=False):
+                            preview_key = f"preview_toggle_{file_ref.file_id}"
+                            load_preview = st.toggle(
+                                "Load preview",
+                                value=False,
+                                key=preview_key,
+                            )
+                            if load_preview:
+                                try:
+                                    token = ensure_access_token(
+                                        access_token, client_id, client_secret
+                                    )
+                                    services = _get_services(token, sqlite_path)
+                                    file_bytes = services["drive"].download_file_bytes(
+                                        file_ref.file_id
+                                    )
+                                    if len(file_bytes) > _PREVIEW_MAX_BYTES:
+                                        st.info("Preview skipped (file too large).")
+                                    elif file_ref.mime_type.startswith("image/"):
+                                        st.image(file_bytes, width="stretch")
+                                    elif file_ref.mime_type == "application/pdf":
+                                        rendered = False
+                                        if hasattr(st, "pdf"):
+                                            try:
+                                                st.pdf(file_bytes)
+                                                rendered = True
+                                            except Exception:
+                                                rendered = False
+                                        if not rendered:
+                                            encoded = base64.b64encode(file_bytes).decode(
+                                                "ascii"
+                                            )
+                                            html = (
+                                                f'<object data="data:application/pdf;base64,{encoded}" '
+                                                'type="application/pdf" width="100%" height="600">'
+                                                "PDF preview unavailable. Use download below."
+                                                "</object>"
+                                            )
+                                            components.html(html, height=620)
+                                        st.download_button(
+                                            "Download PDF",
+                                            data=file_bytes,
+                                            file_name=file_ref.name,
+                                            mime="application/pdf",
+                                        )
+                                    else:
+                                        st.info("Preview not available for this file type.")
+                                except Exception as exc:
+                                    st.error(f"Preview failed: {exc}")
+                            else:
+                                st.caption("Preview loads on demand to keep the UI responsive.")
         st.session_state["label_selections"] = current_selections
         _persist_job_file_widget_state()
     else:
