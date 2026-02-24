@@ -499,6 +499,8 @@ def main() -> None:
                 label_id_map = {label.get("label_id"): label.get("name") for label in labels_data}
                 missing_ocr_count = 0
                 tokenless_count = 0
+                classification_error_count = 0
+                classification_error_samples: list[str] = []
                 if total_files == 0:
                     classify_status_slot.info("No files available for classification.")
                 for idx, file_ref in enumerate(files_to_classify, start=1):
@@ -536,29 +538,50 @@ def main() -> None:
                     classify_detail_slot.caption(
                         "Running lexical/embedding matching and LLM fallback if needed..."
                     )
-                    details = services["label_classification_service"].classify_file(
-                        job_id, file_ref.file_id
-                    )
-                    label_name = label_id_map.get(details.get("label_id"))
-                    results[file_ref.file_id] = {
-                        "label": label_name,
-                        "score": details.get("score", 0.0),
-                        "status": details.get("status", NO_MATCH),
-                        "method": details.get("method"),
-                        "threshold": details.get("threshold"),
-                        "llm_called": details.get("llm_called", False),
-                        "llm_result": details.get("llm_result"),
-                        "candidates": details.get("candidates", []),
-                    }
-                    result_label = label_name or "NO_MATCH"
-                    result_status = str(details.get("status", NO_MATCH))
-                    result_method = str(details.get("method") or "n/a")
-                    classify_status_slot.info(
-                        f"Completed file {idx}/{total_files}: {file_ref.name}"
-                    )
-                    classify_detail_slot.caption(
-                        f"Result: {result_label} | status={result_status} | method={result_method}"
-                    )
+                    try:
+                        details = services["label_classification_service"].classify_file(
+                            job_id, file_ref.file_id
+                        )
+                        label_name = label_id_map.get(details.get("label_id"))
+                        results[file_ref.file_id] = {
+                            "label": label_name,
+                            "score": details.get("score", 0.0),
+                            "status": details.get("status", NO_MATCH),
+                            "method": details.get("method"),
+                            "threshold": details.get("threshold"),
+                            "llm_called": details.get("llm_called", False),
+                            "llm_result": details.get("llm_result"),
+                            "candidates": details.get("candidates", []),
+                        }
+                        result_label = label_name or "NO_MATCH"
+                        result_status = str(details.get("status", NO_MATCH))
+                        result_method = str(details.get("method") or "n/a")
+                        classify_status_slot.info(
+                            f"Completed file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption(
+                            f"Result: {result_label} | status={result_status} | method={result_method}"
+                        )
+                    except Exception as exc:
+                        classification_error_count += 1
+                        if len(classification_error_samples) < 3:
+                            classification_error_samples.append(f"{file_ref.name}: {exc}")
+                        results[file_ref.file_id] = {
+                            "label": None,
+                            "score": 0.0,
+                            "status": NO_MATCH,
+                            "method": None,
+                            "threshold": None,
+                            "llm_called": False,
+                            "llm_result": None,
+                            "candidates": [],
+                        }
+                        classify_status_slot.info(
+                            f"Classification error on file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption(
+                            "Classification failed for this file. Continuing with next file."
+                        )
                     classify_progress.progress(idx / total_files)
                 if total_files:
                     classify_status_slot.info(
@@ -605,6 +628,18 @@ def main() -> None:
                         "if OCR text is empty or only contains punctuation. Arabic text is "
                         "now supported, so re-run OCR if needed."
                     )
+                if classification_error_count:
+                    sample_text = " | ".join(classification_error_samples)
+                    if sample_text:
+                        st.warning(
+                            f"{classification_error_count} file(s) had classification errors and "
+                            f"were skipped. Examples: {sample_text}"
+                        )
+                    else:
+                        st.warning(
+                            f"{classification_error_count} file(s) had classification errors and "
+                            "were skipped."
+                        )
                 st.success("Classification completed.")
             except Exception as exc:
                 st.error(f"Classification failed: {exc}")
