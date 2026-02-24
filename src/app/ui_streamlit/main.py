@@ -481,136 +481,133 @@ def main() -> None:
             except Exception as exc:
                 st.error(f"Report upload failed: {exc}")
         if classify_clicked:
-            if not st.session_state.get("ocr_ready"):
-                st.error("Run OCR first.")
-            else:
+            try:
+                token = ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                results: dict[str, dict] = {}
+                files_to_classify = list(st.session_state.get("files", []))
+                total_files = len(files_to_classify)
+                classify_status_slot = st.empty()
+                classify_detail_slot = st.empty()
+                classify_progress = st.progress(1.0 if total_files == 0 else 0.0)
                 try:
-                    token = ensure_access_token(access_token, client_id, client_secret)
-                    services = _get_services(token, sqlite_path)
-                    results: dict[str, dict] = {}
-                    files_to_classify = list(st.session_state.get("files", []))
-                    total_files = len(files_to_classify)
-                    classify_status_slot = st.empty()
-                    classify_detail_slot = st.empty()
-                    classify_progress = st.progress(1.0 if total_files == 0 else 0.0)
-                    try:
-                        labels_data, _, _ = _load_labels_from_storage(services["storage"])
-                    except Exception:
-                        labels_data = _load_labels_json_readonly()
-                    has_labels = bool(labels_data)
-                    has_examples = any(label.get("examples") for label in labels_data)
-                    label_id_map = {label.get("label_id"): label.get("name") for label in labels_data}
-                    missing_ocr_count = 0
-                    tokenless_count = 0
-                    if total_files == 0:
-                        classify_status_slot.info("No files available for classification.")
-                    for idx, file_ref in enumerate(files_to_classify, start=1):
-                        classify_status_slot.info(
-                            f"Preparing classification for file {idx}/{total_files}: {file_ref.name}"
-                        )
-                        classify_detail_slot.caption("Loading OCR text from DB...")
-                        ocr_result = services["storage"].get_ocr_result(
-                            job_id, file_ref.file_id
-                        )
-                        if ocr_result is None or not ocr_result.text.strip():
-                            missing_ocr_count += 1
-                            results[file_ref.file_id] = {
-                                "label": None,
-                                "score": 0.0,
-                                "status": NO_MATCH,
-                                "method": None,
-                                "threshold": None,
-                                "llm_called": False,
-                                "llm_result": None,
-                            }
-                            classify_status_slot.info(
-                                f"Skipped file {idx}/{total_files}: {file_ref.name}"
-                            )
-                            classify_detail_slot.caption(
-                                "No OCR text found, so classification was skipped."
-                            )
-                            classify_progress.progress(idx / total_files)
-                            continue
-                        if not normalize_text_to_tokens(ocr_result.text):
-                            tokenless_count += 1
-                        classify_status_slot.info(
-                            f"Classifying file {idx}/{total_files}: {file_ref.name}"
-                        )
-                        classify_detail_slot.caption(
-                            "Running lexical/embedding matching and LLM fallback if needed..."
-                        )
-                        details = services["label_classification_service"].classify_file(
-                            job_id, file_ref.file_id
-                        )
-                        label_name = label_id_map.get(details.get("label_id"))
+                    labels_data, _, _ = _load_labels_from_storage(services["storage"])
+                except Exception:
+                    labels_data = _load_labels_json_readonly()
+                has_labels = bool(labels_data)
+                has_examples = any(label.get("examples") for label in labels_data)
+                label_id_map = {label.get("label_id"): label.get("name") for label in labels_data}
+                missing_ocr_count = 0
+                tokenless_count = 0
+                if total_files == 0:
+                    classify_status_slot.info("No files available for classification.")
+                for idx, file_ref in enumerate(files_to_classify, start=1):
+                    classify_status_slot.info(
+                        f"Preparing classification for file {idx}/{total_files}: {file_ref.name}"
+                    )
+                    classify_detail_slot.caption("Loading OCR text from DB...")
+                    ocr_result = services["storage"].get_ocr_result(
+                        job_id, file_ref.file_id
+                    )
+                    if ocr_result is None or not ocr_result.text.strip():
+                        missing_ocr_count += 1
                         results[file_ref.file_id] = {
-                            "label": label_name,
-                            "score": details.get("score", 0.0),
-                            "status": details.get("status", NO_MATCH),
-                            "method": details.get("method"),
-                            "threshold": details.get("threshold"),
-                            "llm_called": details.get("llm_called", False),
-                            "llm_result": details.get("llm_result"),
-                            "candidates": details.get("candidates", []),
+                            "label": None,
+                            "score": 0.0,
+                            "status": NO_MATCH,
+                            "method": None,
+                            "threshold": None,
+                            "llm_called": False,
+                            "llm_result": None,
                         }
-                        result_label = label_name or "NO_MATCH"
-                        result_status = str(details.get("status", NO_MATCH))
-                        result_method = str(details.get("method") or "n/a")
                         classify_status_slot.info(
-                            f"Completed file {idx}/{total_files}: {file_ref.name}"
+                            f"Skipped file {idx}/{total_files}: {file_ref.name}"
                         )
                         classify_detail_slot.caption(
-                            f"Result: {result_label} | status={result_status} | method={result_method}"
+                            "No OCR text found, so classification was skipped."
                         )
                         classify_progress.progress(idx / total_files)
-                    if total_files:
-                        classify_status_slot.info(
-                            f"Classification finished for {total_files} file(s)."
-                        )
-                        classify_detail_slot.caption(
-                            f"Skipped for missing OCR: {missing_ocr_count}."
-                        )
-                    st.session_state["classification_results"] = results
-                    current_selections = dict(st.session_state.get("label_selections", {}))
-                    for file_id, result in results.items():
-                        if result["status"] == MATCHED and result["label"]:
-                            current_selections[file_id] = result["label"]
-                        else:
-                            current_selections[file_id] = None
-                            rename_key = f"edit_{file_id}"
-                            st.session_state[rename_key] = ""
-                    st.session_state["label_selections"] = current_selections
-                    suggestions = _build_suggested_names(
-                        st.session_state.get("files", []), current_selections
+                        continue
+                    if not normalize_text_to_tokens(ocr_result.text):
+                        tokenless_count += 1
+                    classify_status_slot.info(
+                        f"Classifying file {idx}/{total_files}: {file_ref.name}"
                     )
-                    for file_id, suggested in suggestions.items():
+                    classify_detail_slot.caption(
+                        "Running lexical/embedding matching and LLM fallback if needed..."
+                    )
+                    details = services["label_classification_service"].classify_file(
+                        job_id, file_ref.file_id
+                    )
+                    label_name = label_id_map.get(details.get("label_id"))
+                    results[file_ref.file_id] = {
+                        "label": label_name,
+                        "score": details.get("score", 0.0),
+                        "status": details.get("status", NO_MATCH),
+                        "method": details.get("method"),
+                        "threshold": details.get("threshold"),
+                        "llm_called": details.get("llm_called", False),
+                        "llm_result": details.get("llm_result"),
+                        "candidates": details.get("candidates", []),
+                    }
+                    result_label = label_name or "NO_MATCH"
+                    result_status = str(details.get("status", NO_MATCH))
+                    result_method = str(details.get("method") or "n/a")
+                    classify_status_slot.info(
+                        f"Completed file {idx}/{total_files}: {file_ref.name}"
+                    )
+                    classify_detail_slot.caption(
+                        f"Result: {result_label} | status={result_status} | method={result_method}"
+                    )
+                    classify_progress.progress(idx / total_files)
+                if total_files:
+                    classify_status_slot.info(
+                        f"Classification finished for {total_files} file(s)."
+                    )
+                    classify_detail_slot.caption(
+                        f"Skipped for missing OCR: {missing_ocr_count}."
+                    )
+                st.session_state["classification_results"] = results
+                current_selections = dict(st.session_state.get("label_selections", {}))
+                for file_id, result in results.items():
+                    if result["status"] == MATCHED and result["label"]:
+                        current_selections[file_id] = result["label"]
+                    else:
+                        current_selections[file_id] = None
                         rename_key = f"edit_{file_id}"
-                        if current_selections.get(file_id):
-                            st.session_state[rename_key] = suggested
-                    if not has_labels:
-                        st.warning(
-                            "No labels found. Create labels and add examples in the Labels view "
-                            "to enable rule-based classification."
-                        )
-                    elif not has_examples:
-                        st.warning(
-                            "Labels exist but no examples were found. Add OCR examples to labels "
-                            "so similarity scores are meaningful."
-                        )
-                    if missing_ocr_count:
-                        st.warning(
-                            f"{missing_ocr_count} file(s) have no OCR text. Run OCR first to "
-                            "enable classification."
-                        )
-                    if tokenless_count:
-                        st.warning(
-                            f"{tokenless_count} file(s) produced no usable tokens. This can happen "
-                            "if OCR text is empty or only contains punctuation. Arabic text is "
-                            "now supported, so re-run OCR if needed."
-                        )
-                    st.success("Classification completed.")
-                except Exception as exc:
-                    st.error(f"Classification failed: {exc}")
+                        st.session_state[rename_key] = ""
+                st.session_state["label_selections"] = current_selections
+                suggestions = _build_suggested_names(
+                    st.session_state.get("files", []), current_selections
+                )
+                for file_id, suggested in suggestions.items():
+                    rename_key = f"edit_{file_id}"
+                    if current_selections.get(file_id):
+                        st.session_state[rename_key] = suggested
+                if not has_labels:
+                    st.warning(
+                        "No labels found. Create labels and add examples in the Labels view "
+                        "to enable rule-based classification."
+                    )
+                elif not has_examples:
+                    st.warning(
+                        "Labels exist but no examples were found. Add OCR examples to labels "
+                        "so similarity scores are meaningful."
+                    )
+                if missing_ocr_count:
+                    st.warning(
+                        f"{missing_ocr_count} file(s) have no OCR text. Run OCR first to "
+                        "enable classification."
+                    )
+                if tokenless_count:
+                    st.warning(
+                        f"{tokenless_count} file(s) produced no usable tokens. This can happen "
+                        "if OCR text is empty or only contains punctuation. Arabic text is "
+                        "now supported, so re-run OCR if needed."
+                    )
+                st.success("Classification completed.")
+            except Exception as exc:
+                st.error(f"Classification failed: {exc}")
 
     files = st.session_state.get("files", [])
     edits: dict[str, str] = {}
