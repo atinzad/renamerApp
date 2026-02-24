@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.domain.models import FileRef
+from app.domain.models import FileRef, FolderRef
 
 
 class DrivePort(Protocol):
     def list_folder_files(self, folder_id: str) -> list[FileRef]:
         """Return files for a folder in stable order."""
+
+    def list_subfolders(self, folder_id: str) -> list[FolderRef]:
+        """Return child folders for a folder in stable order."""
 
     def download_file_bytes(self, file_id: str) -> bytes:
         """Download file bytes by id."""

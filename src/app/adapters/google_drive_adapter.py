@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
-from app.domain.models import FileRef
+from app.domain.models import FileRef, FolderRef
 from app.ports.drive_port import DrivePort
 
 
@@ -64,7 +64,48 @@ class GoogleDriveAdapter(DrivePort):
             page_token = payload.get("nextPageToken")
             if not page_token:
                 break
-        return files
+        return sorted(files, key=lambda value: (value.name.lower(), value.file_id))
+
+    def list_subfolders(self, folder_id: str) -> list[FolderRef]:
+        folders: list[FolderRef] = []
+        page_token: str | None = None
+        query = (
+            f"'{folder_id}' in parents and trashed=false "
+            "and mimeType='application/vnd.google-apps.folder'"
+        )
+        while True:
+            params = {
+                "q": query,
+                "fields": "nextPageToken, files(id, name)",
+                "pageSize": 1000,
+                "supportsAllDrives": True,
+                "includeItemsFromAllDrives": True,
+                "corpora": "allDrives",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = requests.get(
+                f"{self._BASE_URL}/files",
+                headers=self._auth_header(),
+                params=params,
+                timeout=20,
+            )
+            self._raise_for_status(response, context="list subfolders")
+            payload = response.json()
+            for item in payload.get("files", []):
+                folder_id_value = item.get("id", "")
+                if not folder_id_value:
+                    continue
+                folders.append(
+                    FolderRef(
+                        folder_id=folder_id_value,
+                        name=item.get("name", ""),
+                    )
+                )
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return sorted(folders, key=lambda value: (value.name.lower(), value.folder_id))
 
     def rename_file(self, file_id: str, new_name: str) -> None:
         response = requests.patch(

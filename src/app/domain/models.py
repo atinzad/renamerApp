@@ -11,6 +11,12 @@ class FileRef:
 
 
 @dataclass
+class FolderRef:
+    folder_id: str
+    name: str
+
+
+@dataclass
 class Job:
     job_id: str
     folder_id: str

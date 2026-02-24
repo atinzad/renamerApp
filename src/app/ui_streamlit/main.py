@@ -171,6 +171,29 @@ def _run_ocr_with_progress(
     )
 
 
+def _count_cached_file_states(storage: object, job_id: str, files: list) -> tuple[int, int, int]:
+    ocr_ready_count = 0
+    classified_count = 0
+    extracted_count = 0
+    for file_ref in files:
+        ocr_result = storage.get_ocr_result(job_id, file_ref.file_id)
+        if ocr_result and ocr_result.text.strip():
+            ocr_ready_count += 1
+        if storage.get_file_label_assignment(job_id, file_ref.file_id):
+            classified_count += 1
+        if storage.get_extraction(job_id, file_ref.file_id):
+            extracted_count += 1
+    return ocr_ready_count, classified_count, extracted_count
+
+
+def _folder_display_name(folder_state: dict[str, str]) -> str:
+    name = str(folder_state.get("name") or "").strip()
+    folder_id = str(folder_state.get("id") or "").strip()
+    if name and folder_id and name != folder_id:
+        return f"{name} ({folder_id})"
+    return name or folder_id or "(unknown folder)"
+
+
 def main() -> None:
     st.title("Google Drive Image Renamer")
     _init_state()
@@ -215,26 +238,23 @@ def main() -> None:
             job = services["jobs_service"].create_job(extracted_folder_id)
             files = services["jobs_service"].list_files(job.job_id)
             storage = services["storage"]
-            ocr_ready_count = 0
-            classified_count = 0
-            extracted_count = 0
-            for file_ref in files:
-                ocr_result = storage.get_ocr_result(job.job_id, file_ref.file_id)
-                if ocr_result and ocr_result.text.strip():
-                    ocr_ready_count += 1
-                if storage.get_file_label_assignment(job.job_id, file_ref.file_id):
-                    classified_count += 1
-                if storage.get_extraction(job.job_id, file_ref.file_id):
-                    extracted_count += 1
+            ocr_ready_count, classified_count, extracted_count = _count_cached_file_states(
+                storage, job.job_id, files
+            )
             st.session_state["job_id"] = job.job_id
             st.session_state["files"] = files
+            st.session_state["root_folder_id"] = extracted_folder_id
+            st.session_state["current_folder_id"] = extracted_folder_id
+            st.session_state["folder_nav_stack"] = [
+                {"id": extracted_folder_id, "name": extracted_folder_id}
+            ]
             st.session_state["preview_ops"] = []
             st.session_state["preview_notice"] = ""
             st.session_state["classification_results"] = {}
             st.session_state["label_selections"] = {}
             st.session_state["ocr_ready"] = bool(files) and ocr_ready_count == len(files)
             st.info(
-                f"Listed {len(files)} files from Drive. Job ID: {job.job_id}. "
+                f"Listed {len(files)} files from Drive folder {extracted_folder_id}. Job ID: {job.job_id}. "
                 f"DB reuse: OCR {ocr_ready_count}/{len(files)}, "
                 f"classification {classified_count}/{len(files)}, "
                 f"extraction {extracted_count}/{len(files)}."
@@ -259,6 +279,142 @@ def main() -> None:
             )
         except Exception:
             pass
+
+        if not st.session_state.get("root_folder_id"):
+            try:
+                token = ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                job_record = services["storage"].get_job(job_id)
+                if job_record and getattr(job_record, "folder_id", None):
+                    root_id = str(job_record.folder_id)
+                    st.session_state["root_folder_id"] = root_id
+                    st.session_state["current_folder_id"] = (
+                        st.session_state.get("current_folder_id") or root_id
+                    )
+                    if not st.session_state.get("folder_nav_stack"):
+                        st.session_state["folder_nav_stack"] = [{"id": root_id, "name": root_id}]
+            except Exception:
+                pass
+
+        root_folder_id = str(st.session_state.get("root_folder_id") or "")
+        current_folder_id = str(st.session_state.get("current_folder_id") or root_folder_id)
+        folder_nav_stack = st.session_state.get("folder_nav_stack", [])
+        if not isinstance(folder_nav_stack, list):
+            folder_nav_stack = []
+        if root_folder_id and not folder_nav_stack:
+            folder_nav_stack = [{"id": root_folder_id, "name": root_folder_id}]
+            st.session_state["folder_nav_stack"] = folder_nav_stack
+        if root_folder_id and current_folder_id:
+            st.subheader("Folders")
+            st.caption(f"Root: {root_folder_id}")
+            st.caption(f"Current: {current_folder_id}")
+            folder_nav_notice = str(st.session_state.get("folder_nav_notice") or "").strip()
+            if folder_nav_notice:
+                st.info(folder_nav_notice)
+                st.session_state["folder_nav_notice"] = ""
+            if isinstance(folder_nav_stack, list) and folder_nav_stack:
+                breadcrumb = " / ".join(
+                    _folder_display_name(folder_state)
+                    for folder_state in folder_nav_stack
+                    if isinstance(folder_state, dict)
+                )
+                if breadcrumb:
+                    st.caption(f"Path: {breadcrumb}")
+            subfolders = []
+            navigation_target_id: str | None = None
+            navigation_stack: list[dict[str, str]] | None = None
+            navigation_message = ""
+            try:
+                token = ensure_access_token(access_token, client_id, client_secret)
+                services = _get_services(token, sqlite_path)
+                subfolders = services["drive"].list_subfolders(current_folder_id)
+            except Exception as exc:
+                st.error(f"Folder lookup failed: {exc}")
+
+            nav_cols = st.columns([1, 3])
+            go_up_clicked = nav_cols[0].button(
+                "Up",
+                disabled=not isinstance(folder_nav_stack, list) or len(folder_nav_stack) <= 1,
+                key=f"folder_up_{job_id}_{current_folder_id}",
+            )
+            nav_cols[1].caption(f"Subfolders in current: {len(subfolders)}")
+
+            if go_up_clicked and len(folder_nav_stack) > 1:
+                parent_stack = folder_nav_stack[:-1]
+                parent_state = parent_stack[-1]
+                navigation_target_id = str(parent_state.get("id") or root_folder_id)
+                navigation_stack = parent_stack
+                navigation_message = f"Moved up to folder {navigation_target_id}."
+
+            if subfolders:
+                st.caption("Open subfolder:")
+                for row_start in range(0, len(subfolders), 4):
+                    row_folders = subfolders[row_start : row_start + 4]
+                    row_cols = st.columns(4)
+                    for col, folder in zip(row_cols, row_folders):
+                        folder_id_value = str(getattr(folder, "folder_id", "")).strip()
+                        if not folder_id_value:
+                            continue
+                        folder_name = str(
+                            getattr(folder, "name", "") or folder_id_value
+                        ).strip()
+                        button_label = folder_name or folder_id_value
+                        if col.button(
+                            button_label,
+                            key=f"folder_open_{job_id}_{current_folder_id}_{folder_id_value}",
+                            use_container_width=True,
+                        ):
+                            updated_stack = list(folder_nav_stack)
+                            existing_index = next(
+                                (
+                                    index
+                                    for index, state in enumerate(updated_stack)
+                                    if str(state.get("id", "")).strip() == folder_id_value
+                                ),
+                                None,
+                            )
+                            if existing_index is not None:
+                                updated_stack = updated_stack[: existing_index + 1]
+                            else:
+                                updated_stack.append(
+                                    {"id": folder_id_value, "name": folder_name}
+                                )
+                            navigation_target_id = folder_id_value
+                            navigation_stack = updated_stack
+                            navigation_message = f"Opened folder {folder_id_value}."
+            else:
+                st.caption("No subfolders in this folder.")
+
+            if navigation_target_id and navigation_stack is not None:
+                try:
+                    token = ensure_access_token(access_token, client_id, client_secret)
+                    services = _get_services(token, sqlite_path)
+                    files = services["jobs_service"].refresh_job_files(
+                        job_id, folder_id=navigation_target_id
+                    )
+                    ocr_ready_count, classified_count, extracted_count = (
+                        _count_cached_file_states(services["storage"], job_id, files)
+                    )
+                    st.session_state["current_folder_id"] = navigation_target_id
+                    st.session_state["folder_nav_stack"] = navigation_stack
+                    st.session_state["files"] = files
+                    st.session_state["preview_ops"] = []
+                    st.session_state["preview_notice"] = ""
+                    st.session_state["classification_results"] = {}
+                    st.session_state["label_selections"] = {}
+                    st.session_state["ocr_ready"] = bool(files) and ocr_ready_count == len(files)
+                    st.session_state["ocr_refresh_token"] = str(uuid4())
+                    st.session_state["folder_nav_notice"] = (
+                        f"{navigation_message} Listed {len(files)} files. "
+                        f"DB reuse: OCR {ocr_ready_count}/{len(files)}, "
+                        f"classification {classified_count}/{len(files)}, "
+                        f"extraction {extracted_count}/{len(files)}."
+                    )
+                    _trigger_rerun()
+                except Exception as exc:
+                    st.error(f"Folder navigation failed: {exc}")
+
+            st.divider()
 
         report_cols = st.columns(5)
         run_ocr_clicked = report_cols[0].button(

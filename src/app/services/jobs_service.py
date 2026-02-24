@@ -12,11 +12,7 @@ class JobsService:
 
     def create_job(self, folder_id: str) -> Job:
         job = self._storage.create_job(folder_id)
-        files = self._drive.list_folder_files(folder_id)
-        self._storage.save_job_files(job.job_id, files)
-        self._storage.hydrate_job_cached_data(
-            job.job_id, [file_ref.file_id for file_ref in files]
-        )
+        self.refresh_job_files(job.job_id, folder_id=folder_id)
         return job
 
     def list_files(self, job_id: str) -> list[FileRef]:
@@ -24,3 +20,15 @@ class JobsService:
         if job is None:
             raise RuntimeError(f"Job not found: {job_id}")
         return self._storage.get_job_files(job_id)
+
+    def refresh_job_files(self, job_id: str, folder_id: str | None = None) -> list[FileRef]:
+        job = self._storage.get_job(job_id)
+        if job is None:
+            raise RuntimeError(f"Job not found: {job_id}")
+        target_folder_id = folder_id or job.folder_id
+        files = self._drive.list_folder_files(target_folder_id)
+        self._storage.save_job_files(job_id, files)
+        self._storage.hydrate_job_cached_data(
+            job_id, [file_ref.file_id for file_ref in files]
+        )
+        return files

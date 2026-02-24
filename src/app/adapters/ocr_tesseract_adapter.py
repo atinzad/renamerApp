@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 
 from app.domain.models import OCRResult
@@ -147,10 +148,15 @@ class TesseractOCRAdapter(OCRPort):
             from pdfminer.high_level import extract_text
         except ImportError:
             return ""
+        pdfminer_font_logger = logging.getLogger("pdfminer.pdffont")
+        warning_filter = _PDFMinerFontBBoxFilter()
+        pdfminer_font_logger.addFilter(warning_filter)
         try:
             return extract_text(io.BytesIO(pdf_bytes)) or ""
         except Exception:
             return ""
+        finally:
+            pdfminer_font_logger.removeFilter(warning_filter)
 
     def _looks_like_text(self, text: str) -> bool:
         if not text:
@@ -189,3 +195,11 @@ class TesseractOCRAdapter(OCRPort):
                 resample=Image.BICUBIC,
             )
         return img
+
+
+class _PDFMinerFontBBoxFilter(logging.Filter):
+    _MESSAGE_PREFIX = "Could not get FontBBox from font descriptor because"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Ignore noisy malformed-font warnings from pdfminer; OCR continues via fallback.
+        return not record.getMessage().startswith(self._MESSAGE_PREFIX)

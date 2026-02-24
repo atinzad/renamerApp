@@ -15,7 +15,7 @@ from .label_fallback import (
     list_fallback_candidates,
     normalize_labels_llm,
 )
-from .models import FileRef, Job, RenameOp, UndoLog
+from .models import FileRef, FolderRef, Job, RenameOp, UndoLog
 from .rename_logic import build_manual_plan, resolve_collisions, sanitize_filename
 from .report_rendering import render_increment2_report, render_increment7_report
 from .report_v2 import FinalReportFileBlock, FinalReportModel, pretty_print_fields, render_report_v2
@@ -27,6 +27,7 @@ __all__ = [
     "DocType",
     "DocTypeClassification",
     "FileRef",
+    "FolderRef",
     "Job",
     "Label",
     "LabelExample",
