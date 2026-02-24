@@ -1,4 +1,4 @@
-.PHONY: help ui pull setup setup-python setup-system setup-system-linux setup-system-windows db-backup
+.PHONY: help ui pull setup setup-python setup-system setup-system-linux setup-system-macos setup-system-windows db-backup
 
 DB_PATH ?= ./app.db
 BACKUP_DIR ?= ./backups
@@ -8,6 +8,18 @@ help: ## Show available Make shortcuts
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 ui: ## Start the Streamlit UI
+	@if [ -z "$$VIRTUAL_ENV" ]; then \
+		if [ -f ".venv/bin/activate" ]; then \
+			echo "Activating .venv (POSIX)..."; \
+			. .venv/bin/activate; \
+		elif [ -f ".venv/Scripts/activate" ]; then \
+			echo "Activating .venv (Windows)..."; \
+			. .venv/Scripts/activate; \
+		else \
+			echo ".venv not found. Run 'make setup-python' first."; \
+			exit 1; \
+		fi; \
+	fi; \
 	PYTHONPATH=src streamlit run src/app/ui_streamlit/main.py
 
 pull: ## Pull latest changes from origin
@@ -26,16 +38,27 @@ setup-python: ## Install Python dependencies with uv
 setup-system: ## Install OCR system dependencies (auto-detect OS/package manager)
 	@if command -v apt-get >/dev/null 2>&1; then \
 		$(MAKE) setup-system-linux; \
+	elif command -v brew >/dev/null 2>&1; then \
+		$(MAKE) setup-system-macos; \
 	elif command -v winget >/dev/null 2>&1 || command -v choco >/dev/null 2>&1; then \
 		$(MAKE) setup-system-windows; \
 	else \
-		echo "Skipping system package install (apt-get not found)."; \
+		echo "Skipping system package install (no supported package manager found)."; \
 		echo "Install system OCR dependencies manually (Tesseract OCR and Poppler)."; \
 	fi
 
 setup-system-linux: ## Install OCR system dependencies on Ubuntu/Debian
 	@echo "Installing system OCR dependencies (Ubuntu/Debian)..."
 	sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara poppler-utils
+
+setup-system-macos: ## Install OCR system dependencies on macOS (Homebrew)
+	@echo "Installing system OCR dependencies (macOS/Homebrew)..."
+	@command -v brew >/dev/null 2>&1 || { \
+		echo "Homebrew is not installed. Install it first: https://brew.sh/"; \
+		exit 1; \
+	}
+	brew install tesseract poppler
+	@brew info tesseract-lang >/dev/null 2>&1 && brew install tesseract-lang || true
 
 setup-system-windows: ## Install OCR system dependencies on Windows (winget/choco)
 	@if command -v winget >/dev/null 2>&1; then \

@@ -21,6 +21,7 @@ make setup
 This runs Python dependency installation (`uv sync`) and attempts to install OCR system
 dependencies automatically:
 - Ubuntu/Debian: `apt-get`
+- macOS: `brew`
 - Windows: `winget` (fallback: `choco`)
 
 Manual setup:
@@ -48,6 +49,13 @@ If `winget` is unavailable, use Chocolatey:
 choco install -y tesseract poppler
 ```
 
+macOS (Homebrew):
+```bash
+brew install tesseract poppler
+# optional (extra language packs, if available):
+brew info tesseract-lang >/dev/null 2>&1 && brew install tesseract-lang || true
+```
+
 3) Activate the virtual environment:
 ```bash
 source .venv/bin/activate
@@ -66,6 +74,7 @@ Useful Make shortcuts:
 - `make setup` — first-time bootstrap (Python deps + system OCR deps when supported)
 - `make setup-python` — Python deps only (`uv sync`)
 - `make setup-system` — system OCR deps only
+- `make setup-system-macos` — system OCR deps for macOS/Homebrew
 - `make pull` — pull latest changes
 - `make ui` — start the Streamlit UI
 
