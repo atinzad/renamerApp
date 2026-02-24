@@ -13,13 +13,19 @@
 - Produce a functioning app at the end of each increment
 
 0.3 High-level product behavior
-- Input: Google Drive folder containing images
-- For each image:
-  - (Later increments) OCR -> classification -> field extraction -> deterministic naming proposal
+- Input: Google Drive root folder ID/URL
+- UI supports bounded folder navigation:
+  - User navigates down into subfolders and up to parent, but never above the chosen root
+  - File list always reflects the currently selected folder
+- Supported file types for processing:
+  - `image/*`
+  - `application/pdf`
+- Processing pipeline (current):
+  - OCR (text layer + OCR fallback) -> classification (OCR-based) -> field extraction (source image/PDF-based)
 - Rename is applied only after preview + user approval
 
 - Output (later increments):
-  - Renamed images
+  - Renamed files
   - A structured REPORT.txt in the folder, using a fixed schema with stable labels/order
 - “Training” / labeling:
   - User can create labels and attach example documents
@@ -40,7 +46,10 @@
 - Layer E (Adapters) must remain dumb:
   - Adapters accept schema + input context (text or image/PDF bytes) and return structured JSON output.
   - Adapters do not contain label-specific logic or hard-coded extractors.
-- Single-file mandate for Streamlit UI remains intact (single entrypoint, no multi-page UI).
+- Single-page mandate for Streamlit UI remains intact:
+  - One Streamlit entrypoint (`ui_streamlit/main.py`)
+  - No Streamlit multipage app routing
+  - UI helper modules are allowed (`ui_streamlit/auth.py`, `ui_streamlit/helpers.py`, `ui_streamlit/labels_view.py`)
 
 ### 1.2 Import rules
 - UI MUST import only from:
@@ -72,7 +81,7 @@
 ```
 repo/
   pyproject.toml
-  README.txt
+  README.md
   .env.example
   src/
     app/
@@ -85,9 +94,10 @@ repo/
       services/
       ui_streamlit/
         __init__.py
+        auth.py
+        helpers.py
+        labels_view.py
         main.py
-        pages/
-        components/
 ```
 
 ### 2.2 Module responsibilities (stable)
@@ -95,11 +105,12 @@ repo/
 - `app/ports`: Protocols for external dependencies
 - `app/adapters`: Concrete implementations of ports
 - `app/services`: Use-cases coordinating domain + ports
-- `ui_streamlit`: UI that calls services only
+- `ui_streamlit`: single-page Streamlit UI (entrypoint + helper modules) that calls services only
 
 ## 3. Cross-Increment Contracts (Stable Interfaces and Models)
 ### 3.1 Domain models (initial set, added over time)
-- FileRef(file_id: str, name: str, mime_type: str)
+- FileRef(file_id: str, name: str, mime_type: str, sort_index: int | None)
+- FolderRef(folder_id: str, name: str)
 - Job(job_id: str, folder_id: str, created_at: datetime, status: str)
 - RenameOp(file_id: str, old_name: str, new_name: str)
 - UndoLog(job_id: str, created_at: datetime, ops: list[RenameOp])
@@ -107,6 +118,7 @@ repo/
 ### 3.2 Port contracts (minimum stable set; methods added by increments)
 #### 3.2.1 DrivePort (Increment 1 baseline)
 - list_folder_files(folder_id: str) -> list[FileRef]
+- list_subfolders(folder_id: str) -> list[FolderRef]
 - rename_file(file_id: str, new_name: str) -> None
 
 #### 3.2.2 StoragePort (Increment 1 baseline)
@@ -125,6 +137,8 @@ repo/
 - LLMPort (Increment 5, label-name fallback)
 - DrivePort.upload_text_file (Increment 2)
 - DrivePort.download_file_bytes (Increment 3)
+- DrivePort.list_subfolders (folder navigation enhancement)
+- StoragePort.hydrate_job_cached_data (cross-job cached result reuse by file_id)
 
 ### 3.3 Composition root contract
 - `app.container` MUST expose a function that builds services given runtime secrets/paths.
@@ -145,7 +159,11 @@ repo/
 - User can input OAuth Client ID and Client Secret to generate an access token via OAuth
 - User can paste the OAuth redirect URL and extract the code to obtain an access token
 - User can input a Drive folder ID or full folder URL
-- App lists image files in that folder
+- App lists supported files in the current folder (`image/*`, `application/pdf`)
+- App supports root-bounded folder navigation:
+  - User can open subfolders
+  - User can go up to parent
+  - User cannot navigate above the selected root
 - User manually enters new names per file (subset allowed)
 - App previews a rename plan:
   - Sanitization applied
@@ -178,6 +196,10 @@ repo/
   - Preview
   - Apply Rename
   - Undo Rename
+- Folder navigation:
+  - “Up” button
+  - Subfolder buttons for current folder
+  - Current folder displayed as text (not an action button)
 - Display:
   - job_id + file list (file name, file_id)
 - Manual rename editor:
@@ -200,8 +222,11 @@ repo/
 
 ### 5.5 Services requirements
 - JobsService
-  - create_job(folder_id): creates job in storage, lists files from Drive, stores file list
+  - create_job(folder_id): creates job in storage, refreshes files for folder context
   - list_files(job_id): returns stored list
+  - refresh_job_files(job_id, folder_id | None): refreshes `job_files` for folder navigation context
+    - persists current file list
+    - hydrates cached per-file data from prior jobs by `file_id` when available
 - RenameService
   - preview_manual_rename(job_id, edits):
     - loads stored job files
@@ -217,7 +242,7 @@ repo/
     - clear undo log after successful undo
 
 ### 5.6 Storage schema (SQLite) — DDL MUST be included in implementation
-- jobs(job_id TEXT PRIMARY KEY, folder_id TEXT, created_at TEXT, status TEXT)
+- jobs(job_id TEXT PRIMARY KEY, folder_id TEXT, created_at TEXT, status TEXT, report_file_id TEXT)
 - job_files(job_id TEXT, file_id TEXT, name TEXT, mime_type TEXT, sort_index INTEGER)
 - undo_logs(job_id TEXT PRIMARY KEY, created_at TEXT)
 - undo_ops(job_id TEXT, file_id TEXT, old_name TEXT, new_name TEXT, op_index INTEGER)
@@ -227,6 +252,8 @@ Notes:
 
 ### 5.7 Acceptance criteria / definition of done
 - List files includes only `image/*` and `application/pdf` files; skips folders and other mime types (including `text/plain`)
+- Folder navigation updates file list to current folder and preserves root boundary
+- Listing files may reuse cached DB state by `file_id` from prior jobs when available (OCR/classification/extraction/timings, in later increments)
 - Preview returns sanitized, collision-free names (including against unchanged files)
 - Apply rename changes Drive file names accordingly
 - Undo restores old names
@@ -309,8 +336,8 @@ Notes:
   - fill `EXTRACTED_*` blocks with the placeholder token if no stored data exists
 
 ### 6.6 Storage changes
-- Storing the created report `file_id` is optional but recommended:
-  - `ALTER jobs ADD COLUMN report_file_id TEXT`
+- Storing the created report `file_id` is required in current schema:
+  - `jobs.report_file_id TEXT` (if missing in older DBs, migrate with `ALTER jobs ADD COLUMN report_file_id TEXT`)
 
 ### 6.7 UI requirements
 - In job view:
@@ -331,6 +358,7 @@ Notes:
 - Run OCR to extract text
 - Store OCR text per file in storage
 - UI can display OCR text per file
+- OCR run shows live status/progress (download, OCR, save, completion)
 
 ### 7.2 Non-goals (MUST NOT implement)
 - Labels/LLM classification
@@ -348,7 +376,7 @@ Notes:
 
 ### 7.5 Services requirements
 - OCRService
-  - run_ocr(job_id: str, file_ids: list[str] | None = None) -> None
+  - run_ocr(job_id: str, file_ids: list[str] | None = None, progress_callback: Callable | None = None) -> None
   - For each file:
     - download bytes
     - call OCRPort.extract_text
@@ -357,6 +385,7 @@ Notes:
     - `image/*` and `application/pdf` files
     - skip `text/plain` files entirely
   - Batch OCR skips files that already have OCR stored (unless file_ids is provided)
+  - Emits progress stages for UI status updates
 
 ### 7.6 Storage changes (SQLite)
 - Add table:
@@ -369,6 +398,7 @@ Notes:
 
 ### 7.7 UI requirements
 - Button: “Run OCR”
+- Per-run OCR progress status + progress bar
 - Per file: “View OCR” toggle/expand showing OCR text
   - View OCR appears after OCR completes for the active job
 
@@ -376,21 +406,24 @@ Notes:
 - OCR text stored for each processed file
 - OCR can be rerun (overwrites prior result)
 - App still supports manual rename/undo and report upload from previous increments
- - Report EXTRACTED_TEXT uses stored OCR text when available; otherwise placeholder
+- Report EXTRACTED_TEXT uses stored OCR text when available; otherwise placeholder
 
 ### 7.9 OCR dependencies (implementation guidance)
 - Python deps: `pytesseract`, `pillow`, `pdf2image`
 - System deps (Ubuntu): `tesseract-ocr`, `tesseract-ocr-ara`, `poppler-utils`
 - OCR workers default to CPU core count at runtime (auto-detected)
+- For PDFs, text-layer extraction may be attempted before raster OCR
 
 ## 8. INCREMENT 4 SPEC — User Labels (“Training”) + Similarity-Based Classification
 ### 8.1 Scope (MUST implement)
 - User can create labels inline per job file
 - Labels are stored in SQLite (local `app.db`, gitignored)
 - Each label stores OCR text examples from files assigned to that label
-- Classify job files by matching OCR text against label examples (lexical similarity)
+- Classify job files by matching OCR text against label examples (embeddings with lexical fallback)
 - Store per-file classification results in UI state (label name, score, status)
 - Rename field auto-fills from label name with numbering + original extension
+- Classification can run even when OCR is only partially available; files missing OCR are skipped with warnings
+- Per-file classification errors must not abort whole-job classification
 
 ### 8.2 Non-goals (MUST NOT implement)
 - LLM label fallback (Increment 5)
@@ -432,7 +465,7 @@ Notes:
 
 ### 8.6 Services requirements
 - Classification uses OCR text + label examples stored in SQLite
-- Embeddings-based classification and label storage services remain optional for later increments
+- Embeddings-based scoring is primary when available, with lexical fallback when embeddings are unavailable
 
 ### 8.7 Storage changes (SQLite)
 - Add tables:
@@ -442,7 +475,9 @@ Notes:
     is_active INTEGER,
     created_at TEXT,
     extraction_schema_json TEXT,
-    naming_template TEXT
+    naming_template TEXT,
+    llm TEXT,
+    extraction_instructions TEXT
     )
   - label_examples(example_id TEXT PRIMARY KEY, label_id TEXT, file_id TEXT, filename TEXT, created_at TEXT)
     - file_id must be unique (a file may be attached to only one label)
@@ -452,11 +487,18 @@ Notes:
 
 ### 8.8 UI requirements
 - Job screen:
+  - Per-file display uses bordered file cards with a details toggle
+  - File filters before file list:
+    - OCR: `ALL` / `OCR done` / `OCR not done`
+    - Classification: `ALL` / `Classification done` / `Classification not done`
+    - Classification label: specific label or `ALL` (enabled only when classification filter is `Classification done`)
+    - Extraction: `ALL` / `Extraction done` / `Extraction not done`
   - Per file: “Create new label” input + button (adds OCR example to SQLite)
   - Per file: “Classify” dropdown sourced from stored labels
     - Manual selection persists an override (stored in file_label_overrides)
   - Rename field auto-fills with label name + numbering + extension
-  - Button: “Classify files” (runs lexical similarity over OCR text)
+  - Button: “Classify files” (runs similarity over OCR text with live status/progress)
+    - Batch classification continues file-by-file when some files fail, and reports skipped/error counts
 - Labels view (in the same Streamlit app):
   - View existing labels and examples
   - Add/delete label examples
@@ -469,8 +511,9 @@ Notes:
 ### 8.10 Label storage (current)
 - Labels and examples are stored in SQLite (`app.db`, gitignored)
 
-### 8.11 Deferred schema configuration
-- extraction_schema and naming_template collection is deferred to a later increment
+### 8.11 Schema configuration status (current)
+- Labels support persisted `extraction_schema_json` and `extraction_instructions`
+- Schema and instructions can be generated from OCR examples with optional guidance override
 
 ## 9. INCREMENT 5 SPEC — LLM Label-Name Fallback (Suggestion Layer)
 ### 9.1 Scope (MUST implement)
@@ -497,6 +540,7 @@ Notes:
   - Score candidates in a single LLM call with all labels; choose highest confidence
   - If highest confidence < min threshold, abstain
   - Store LLM label classification (label_name or null) with confidence + signals
+  - LLM failures (configuration/API/runtime) MUST NOT abort batch classification
 
 ### 9.5 Storage changes (SQLite)
 - Add table:
@@ -513,6 +557,7 @@ Notes:
 - LLM classification runs only for unlabeled/unmatched files
 - Results are stored and displayed
 - Label results remain authoritative if present
+- If LLM is unavailable/fails, classification still completes for remaining files
 
 ## 10. INCREMENT 6 SPEC — Field Extraction (Reporting + Decision Support)
 ### 10.1 Scope (MUST implement)
@@ -535,7 +580,7 @@ For each file:
   - Or mark as “needs review” in extracted fields
 - Example-driven schema builder:
   - User provides OCR examples and optional schema guidance for a label
-  - If optional guidance is present, guidance takes precedence for schema generation
+  - If optional guidance is present, guidance takes precedence for schema generation (OCR is ignored for field selection constraints)
   - Otherwise system generates extraction_schema_json + extraction_instructions from OCR context with relevance filtering
 
 ### 10.4 Port requirements
@@ -544,6 +589,7 @@ For each file:
 - LLMPort MUST add image/PDF extraction:
   - extract_fields_from_image(schema: dict, file_bytes: bytes, mime_type: str, instructions: str | None = None) -> dict
 - LLMAdapter MUST use structured output (JSON mode) to satisfy the provided schema
+  - For image/PDF extraction, LLMAdapter should use a vision-capable model and enforce a max-page/image limit for PDFs
 - StoragePort methods to store extraction results
 - StoragePort MUST support label extraction instructions
 
@@ -555,7 +601,7 @@ For each file:
   - Store extraction results
   - No naming proposal service in this increment
 - SchemaBuilderService
-  - build_from_ocr(label_id, ocr_text) -> (schema, instructions)
+  - build_from_ocr(label_id, ocr_text, guidance_override=None) -> (schema, instructions)
   - Guidance-first behavior: if optional guidance is provided, schema generation uses guidance as the source of truth
   - Persists extraction_schema_json and extraction_instructions
 
@@ -567,7 +613,7 @@ For each file:
 - Labels page:
   - For each label: define extraction_schema (JSON)
   - For each label: define extraction_instructions (text)
-  - “Build schema from OCR example” action that generates schema + instructions
+  - “Build schema from examples” action that generates schema + instructions
     - Optional schema guidance takes precedence over OCR when provided
     - Schema generation uses an LLM with a refinement pass
     - Cap schemas at 15 fields; use concise English snake_case keys
@@ -675,12 +721,16 @@ Notes:
 ### 12.3 Prompts SHOULD request:
 - Minimal runnable code
 - Clear exceptions for expected failures (auth, missing folder, API error)
-- A short run guide in README.txt
+- A short run guide in README.md
 
 ## 13. Security and Operational Notes (applies to all increments)
 ### 13.1 OAuth approach for MVP
 - Streamlit UI may accept access_token pasted by user (fastest MVP)
 - OAuth client flow may be used to generate access tokens
+- Runtime token priority:
+  - Latest OAuth/manual token in session overrides startup `.env` token
+  - Successful OAuth/manual token updates `GOOGLE_DRIVE_ACCESS_TOKEN` in `.env`
+  - Refresh token persistence may use OS keyring when available
 - Production OAuth flow is out of scope for these increments
 
 ### 13.2 Data stored
@@ -692,3 +742,18 @@ Notes:
 ### 13.3 Drive behavior
 - Google Drive permits duplicate filenames in a folder.
 - The app chooses to avoid duplicates via collision resolution to reduce confusion.
+
+### 13.4 Developer shortcuts and setup
+- `make ui` should start Streamlit and auto-activate `.venv` when needed
+- `make setup` should bootstrap Python + system OCR dependencies
+- `make setup-python` should install Python dependencies via `uv sync`
+- `make setup-system` should auto-detect package manager
+  - Linux: `apt-get`
+  - macOS: `brew`
+  - Windows: `winget`/`choco`
+- `make setup-system-linux` should install OCR dependencies explicitly for Ubuntu/Debian
+- `make setup-system-macos` should install OCR dependencies explicitly via Homebrew
+- `make setup-system-windows` should install OCR dependencies explicitly via `winget`/`choco`
+- `make pull` should fetch latest repository changes
+- `make help` should list available shortcuts
+- `make db-backup` should create timestamped backups under `./backups`
