@@ -504,13 +504,37 @@ def main() -> None:
                 if total_files == 0:
                     classify_status_slot.info("No files available for classification.")
                 for idx, file_ref in enumerate(files_to_classify, start=1):
-                    classify_status_slot.info(
-                        f"Preparing classification for file {idx}/{total_files}: {file_ref.name}"
-                    )
-                    classify_detail_slot.caption("Loading OCR text from DB...")
-                    ocr_result = services["storage"].get_ocr_result(
-                        job_id, file_ref.file_id
-                    )
+                    try:
+                        classify_status_slot.info(
+                            f"Preparing classification for file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption("Loading OCR text from DB...")
+                        ocr_result = services["storage"].get_ocr_result(
+                            job_id, file_ref.file_id
+                        )
+                    except Exception as exc:
+                        classification_error_count += 1
+                        if len(classification_error_samples) < 3:
+                            classification_error_samples.append(f"{file_ref.name}: {exc}")
+                        results[file_ref.file_id] = {
+                            "label": None,
+                            "score": 0.0,
+                            "status": NO_MATCH,
+                            "method": None,
+                            "threshold": None,
+                            "llm_called": False,
+                            "llm_result": None,
+                            "candidates": [],
+                        }
+                        classify_status_slot.info(
+                            f"Classification error on file {idx}/{total_files}: {file_ref.name}"
+                        )
+                        classify_detail_slot.caption(
+                            "Failed to load OCR/classification input for this file. "
+                            "Continuing with next file."
+                        )
+                        classify_progress.progress(idx / total_files)
+                        continue
                     if ocr_result is None or not ocr_result.text.strip():
                         missing_ocr_count += 1
                         results[file_ref.file_id] = {
@@ -678,7 +702,7 @@ def main() -> None:
             llm_classifications = services["storage"].list_llm_label_classifications(job_id)
             llm_overrides = services["storage"].list_llm_label_overrides(job_id)
         except Exception as exc:
-            st.error(f"LLM fallback lookup failed: {exc}")
+            st.warning(f"LLM fallback suggestions unavailable: {exc}")
     if files:
         st.subheader("Files")
         if using_json_fallback and labels_data:
